@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 
 #include "pipewire_audio.h"
+#include "wyoming.h"
 #include "ACAP.h"
 #include "cJSON.h"
 
@@ -82,26 +83,124 @@ audio_error_callback(const GError *error, gpointer userdata) {
     ACAP_STATUS_SetString("output", "error", error ? error->message : "Unknown error");
 }
 
-// =============================================================================
-// WAV FILE HANDLING
-// =============================================================================
-
-// WAV file header structure (PCM 16-bit mono)
-typedef struct {
-    char riff[4];              // "RIFF"
+// Forward declarations
+typedef struct __attribute__((packed)) {
+    char riff[4];
     uint32_t file_size;
-    char wave[4];              // "WAVE"
-    char fmt[4];               // "fmt "
+    char wave[4];
+    char fmt[4];
     uint32_t fmt_size;
-    uint16_t audio_format;     // 1 = PCM
+    uint16_t audio_format;
     uint16_t num_channels;
     uint32_t sample_rate;
     uint32_t byte_rate;
     uint16_t block_align;
     uint16_t bits_per_sample;
-    char data[4];              // "data"
+    char data[4];
     uint32_t data_size;
-} __attribute__((packed)) WavHeader;
+} WavHeader;
+
+static gboolean start_playback_idle(gpointer user_data);
+
+// Wyoming connection state callback
+void
+wyoming_state_callback(WyomingServiceType service, WyomingConnectionState state, const char* error_msg) {
+    const char* service_name = (service == WYOMING_SERVICE_PIPER) ? "piper" : "whisper";
+    const char* state_names[] = {"disconnected", "connecting", "connected", "error"};
+
+    LOG("Wyoming %s: %s%s%s\n", service_name, state_names[state],
+        error_msg ? " - " : "", error_msg ? error_msg : "");
+
+    // Update status
+    ACAP_STATUS_SetString("wyoming", service_name, state_names[state]);
+    if (error_msg) {
+        ACAP_STATUS_SetString("wyoming", "error", error_msg);
+    }
+}
+
+// Wyoming TTS audio callback - receives WAV data from Piper
+void
+wyoming_audio_callback(WyomingServiceType service, const unsigned char* data, size_t length) {
+    (void)service;  // We know it's from Piper for TTS
+
+    LOG("Wyoming TTS: Received %zu bytes of audio data\n", length);
+
+    // Load WAV data into playback buffer
+    // For now, we'll treat the data as complete WAV file
+    // TODO: Might need to handle chunked data better
+
+    // Ensure playback buffer is clear
+    if (va_state.playback.samples) {
+        free(va_state.playback.samples);
+        va_state.playback.samples = NULL;
+    }
+
+    // Parse WAV header
+    if (length < sizeof(WavHeader)) {
+        LOG_WARN("Wyoming TTS: Audio data too small for WAV header\n");
+        return;
+    }
+
+    WavHeader *header = (WavHeader*)data;
+
+    // Validate WAV header
+    if (memcmp(header->riff, "RIFF", 4) != 0 || memcmp(header->wave, "WAVE", 4) != 0) {
+        LOG_WARN("Wyoming TTS: Invalid WAV header\n");
+        return;
+    }
+
+    LOG("WAV: %u Hz, %u channels, %u bits, format=%u\n",
+        header->sample_rate, header->num_channels, header->bits_per_sample, header->audio_format);
+
+    // PCM data follows immediately after the header
+    // Our WavHeader struct already includes the "data" chunk marker and size
+    const unsigned char *ptr = data + sizeof(WavHeader);
+    const unsigned char *end = data + length;
+    uint32_t data_size = header->data_size;
+
+    if (ptr + data_size > end) {
+        LOG_WARN("WAV data extends beyond buffer (expected %u bytes, have %zu)\n",
+                 data_size, end - ptr);
+        return;
+    }
+
+    // Convert PCM16 to F32
+    if (header->audio_format == 1 && header->bits_per_sample == 16 && header->num_channels == 1) {
+        guint32 num_samples = data_size / 2;
+        va_state.playback.samples = malloc(num_samples * sizeof(float));
+
+        if (!va_state.playback.samples) {
+            LOG_WARN("Failed to allocate playback buffer\n");
+            return;
+        }
+
+        const int16_t *pcm16 = (const int16_t*)ptr;
+        for (guint32 i = 0; i < num_samples; i++) {
+            va_state.playback.samples[i] = pcm16[i] / 32768.0f;
+        }
+
+        va_state.playback.size = num_samples;
+        va_state.playback.write_pos = num_samples;
+        va_state.playback.sample_rate = header->sample_rate;
+        va_state.playback.read_pos = 0;
+        va_state.playback.ready = TRUE;
+
+        LOG("TTS audio loaded: %u samples (%.2f seconds at %u Hz)\n",
+            num_samples, (float)num_samples / header->sample_rate, header->sample_rate);
+
+        // Start playback
+        g_idle_add(start_playback_idle, NULL);
+    } else {
+        LOG_WARN("Unsupported WAV format: format=%u bits=%u channels=%u\n",
+                 header->audio_format, header->bits_per_sample, header->num_channels);
+    }
+}
+
+// =============================================================================
+// WAV FILE HANDLING
+// =============================================================================
+
+// WavHeader is already defined in forward declarations above
 
 // Convert 16-bit PCM to 32-bit float (-1.0 to 1.0)
 static void
@@ -500,6 +599,145 @@ HTTP_Endpoint_test_download(const ACAP_HTTP_Response response, const ACAP_HTTP_R
     free(chunk.data);
 }
 
+// Test Wyoming connection endpoint
+void
+HTTP_Endpoint_test_wyoming(const ACAP_HTTP_Response response, const ACAP_HTTP_Request request) {
+    const char* method = ACAP_HTTP_Get_Method(request);
+
+    if (!method || strcmp(method, "GET") != 0) {
+        ACAP_HTTP_Respond_Error(response, 400, "Only GET method allowed");
+        return;
+    }
+
+    // Get which service to test (piper or whisper)
+    const char* service_param = ACAP_HTTP_Request_Param(request, "service");
+    WyomingServiceType service = WYOMING_SERVICE_PIPER;
+
+    if (service_param && strcmp(service_param, "whisper") == 0) {
+        service = WYOMING_SERVICE_WHISPER;
+    }
+
+    const char* service_name = (service == WYOMING_SERVICE_PIPER) ? "Piper" : "Whisper";
+
+    LOG("Testing Wyoming %s connection\n", service_name);
+
+    // Try to connect
+    if (wyoming_connect(service) != 0) {
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg), "Failed to connect to Wyoming %s: %s",
+                 service_name, wyoming_get_error(service));
+        LOG_WARN("%s\n", error_msg);
+        ACAP_HTTP_Respond_Error(response, 500, error_msg);
+        return;
+    }
+
+    // Wait a bit for connection to establish
+    LOG("Waiting for connection to establish...\n");
+    for (int i = 0; i < 50; i++) {  // Wait up to 5 seconds
+        if (wyoming_is_connected(service)) {
+            const char* info = wyoming_get_connection_info(service);
+            LOG("Wyoming connection successful: %s\n", info);
+            ACAP_HTTP_Respond_Text(response, info);
+            return;
+        }
+
+        WyomingConnectionState state = wyoming_get_state(service);
+        if (state == WYOMING_STATE_ERROR) {
+            const char* error = wyoming_get_error(service);
+            LOG_WARN("Wyoming connection failed: %s\n", error);
+            ACAP_HTTP_Respond_Error(response, 500, error);
+            return;
+        }
+
+        usleep(100000);  // 100ms
+    }
+
+    // Timeout
+    LOG_WARN("Wyoming connection timeout\n");
+    wyoming_disconnect(service);
+    ACAP_HTTP_Respond_Error(response, 504, "Connection timeout");
+}
+
+// TTS Speak endpoint
+void
+HTTP_Endpoint_speak(const ACAP_HTTP_Response response, const ACAP_HTTP_Request request) {
+    const char* method = ACAP_HTTP_Get_Method(request);
+
+    if (!method || strcmp(method, "POST") != 0) {
+        ACAP_HTTP_Respond_Error(response, 400, "Only POST method allowed");
+        return;
+    }
+
+    const char* contentType = ACAP_HTTP_Get_Content_Type(request);
+    if (!contentType || strcmp(contentType, "application/json") != 0) {
+        ACAP_HTTP_Respond_Error(response, 415, "Content-Type must be application/json");
+        return;
+    }
+
+    if (!request->postData || request->postDataLength == 0) {
+        ACAP_HTTP_Respond_Error(response, 400, "Missing POST data");
+        return;
+    }
+
+    // Parse JSON request
+    cJSON* body = cJSON_Parse(request->postData);
+    if (!body) {
+        ACAP_HTTP_Respond_Error(response, 400, "Invalid JSON");
+        return;
+    }
+
+    // Get text to speak (required)
+    cJSON* text_item = cJSON_GetObjectItem(body, "text");
+    if (!text_item || !cJSON_IsString(text_item) || strlen(text_item->valuestring) == 0) {
+        cJSON_Delete(body);
+        ACAP_HTTP_Respond_Error(response, 400, "Missing or empty 'text' field");
+        return;
+    }
+    const char* text = text_item->valuestring;
+
+    // Get voice (optional)
+    cJSON* voice_item = cJSON_GetObjectItem(body, "voice");
+    const char* voice = (voice_item && cJSON_IsString(voice_item)) ? voice_item->valuestring : NULL;
+
+    LOG("TTS Speak request: text='%s' voice='%s'\n", text, voice ? voice : "default");
+
+    // Check if Wyoming Piper is connected
+    if (!wyoming_is_connected(WYOMING_SERVICE_PIPER)) {
+        LOG("Piper not connected, attempting connection...\n");
+        if (wyoming_connect(WYOMING_SERVICE_PIPER) != 0) {
+            cJSON_Delete(body);
+            ACAP_HTTP_Respond_Error(response, 503, "Failed to connect to TTS service");
+            return;
+        }
+
+        // Wait for connection
+        for (int i = 0; i < 30; i++) {
+            if (wyoming_is_connected(WYOMING_SERVICE_PIPER)) {
+                break;
+            }
+            usleep(100000);  // 100ms
+        }
+
+        if (!wyoming_is_connected(WYOMING_SERVICE_PIPER)) {
+            cJSON_Delete(body);
+            ACAP_HTTP_Respond_Error(response, 503, "TTS service connection timeout");
+            return;
+        }
+    }
+
+    // Send TTS request
+    if (wyoming_tts_synthesize(text, voice) != 0) {
+        cJSON_Delete(body);
+        ACAP_HTTP_Respond_Error(response, 500, "Failed to send TTS request");
+        return;
+    }
+
+    cJSON_Delete(body);
+
+    // Response will be "accepted" - audio will play when ready
+    ACAP_HTTP_Respond_Text(response, "TTS request accepted, audio will play when ready");
+}
+
 void
 HTTP_Endpoint_playback(const ACAP_HTTP_Response response, const ACAP_HTTP_Request request) {
     const char* method = ACAP_HTTP_Get_Method(request);
@@ -609,7 +847,9 @@ int main(void) {
 
     // Register HTTP endpoints
     ACAP_HTTP_Node("playback", HTTP_Endpoint_playback);
+    ACAP_HTTP_Node("speak", HTTP_Endpoint_speak);
     ACAP_HTTP_Node("test_download", HTTP_Endpoint_test_download);
+    ACAP_HTTP_Node("test_wyoming", HTTP_Endpoint_test_wyoming);
 
     // Initialize status groups
     ACAP_STATUS_SetBool("input", "state", 0);
@@ -621,11 +861,45 @@ int main(void) {
     ACAP_STATUS_SetNumber("output", "size", 0);
     ACAP_STATUS_SetString("output", "status", "Ready");
 
+    ACAP_STATUS_SetString("wyoming", "piper", "not configured");
+    ACAP_STATUS_SetString("wyoming", "whisper", "not configured");
+
     LOG("Entering main loop\n");
 	main_loop = g_main_loop_new(NULL, FALSE);
 
     // CRITICAL: Initialize PipeWire audio with the main loop context
     pw_audio_init(g_main_loop_get_context(main_loop));
+
+    // Initialize Wyoming client
+    if (wyoming_init(main_loop) == 0) {
+        wyoming_set_state_callback(wyoming_state_callback);
+        wyoming_set_audio_callback(wyoming_audio_callback);
+
+        // Configure from settings
+        cJSON* settings = ACAP_Get_Config("settings");
+        if (settings) {
+            const char* wyoming_server = cJSON_GetObjectItem(settings, "wyoming") ?
+                                        cJSON_GetObjectItem(settings, "wyoming")->valuestring : NULL;
+            int piper_port = cJSON_GetObjectItem(settings, "piper") ?
+                            cJSON_GetObjectItem(settings, "piper")->valueint : 0;
+            int whisper_port = cJSON_GetObjectItem(settings, "whisper") ?
+                              cJSON_GetObjectItem(settings, "whisper")->valueint : 0;
+            const char* language = cJSON_GetObjectItem(settings, "language") ?
+                                  cJSON_GetObjectItem(settings, "language")->valuestring : "sv";
+
+            if (wyoming_server && piper_port && whisper_port) {
+                LOG("Configuring Wyoming: server=%s piper=%d whisper=%d lang=%s\n",
+                    wyoming_server, piper_port, whisper_port, language);
+                wyoming_configure(wyoming_server, piper_port, whisper_port, language);
+                ACAP_STATUS_SetString("wyoming", "piper", "configured");
+                ACAP_STATUS_SetString("wyoming", "whisper", "configured");
+            } else {
+                LOG_WARN("Wyoming settings incomplete in settings.json\n");
+            }
+        }
+    } else {
+        LOG_WARN("Failed to initialize Wyoming client\n");
+    }
 
     // Setup signal handlers
     GSource *signal_source = g_unix_signal_source_new(SIGTERM);
@@ -638,6 +912,9 @@ int main(void) {
 
     g_main_loop_run(main_loop);
 	LOG("Terminating and cleaning up %s\n", APP_PACKAGE);
+
+    // Cleanup Wyoming client
+    wyoming_cleanup();
 
     // Cleanup audio resources
     if (va_state.input.stream) {

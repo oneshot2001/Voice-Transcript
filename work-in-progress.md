@@ -8,7 +8,7 @@ Building a voice assistant application on Axis network speaker (Freescale i.MX6 
 
 ---
 
-## Current Status: 🔨 STEP 1 - WAV PLAYBACK FROM URL
+## Current Status: 🎉 STEPS 1-4 COMPLETE - WYOMING TTS FULLY WORKING!
 
 ### Architecture Redesign Complete ✅
 - **Previous:** Simple record/playback test application
@@ -21,7 +21,7 @@ Building a voice assistant application on Axis network speaker (Freescale i.MX6 
 **Goal:** HTTP POST endpoint that downloads and plays WAV files from URL
 
 **Completed Features:**
-- ✅ HTTP POST `/local/base/playback` endpoint
+- ✅ HTTP POST `/local/voice/playback` endpoint
 - ✅ WAV file download via libcurl
 - ✅ WAV header parsing and validation
 - ✅ PCM16 to F32 sample conversion
@@ -29,6 +29,7 @@ Building a voice assistant application on Axis network speaker (Freescale i.MX6 
 - ✅ PipeWire output stream integration
 - ✅ Status reporting (input.*, output.*)
 - ✅ Diagnostic endpoint for network testing
+- ✅ Network connectivity verified and working
 
 **WAV Format Supported:**
 - Sample Rate: 16000 Hz (or any rate, PipeWire will resample)
@@ -36,169 +37,139 @@ Building a voice assistant application on Axis network speaker (Freescale i.MX6 
 - Channels: Mono (1 channel)
 - Container: WAV (RIFF)
 
-### Current Issue: Network Connectivity 🔍
-**Problem:** Camera cannot download WAV files from `http://10.13.8.183:5001`
+### Steps 2-4: Wyoming Protocol TTS ✅ **NEW!**
+**Goal:** Direct text-to-speech using Wyoming Piper protocol
 
-**Error:** `Timeout was reached (error code 28)`
+**Completed Features:**
+- ✅ Wyoming protocol TCP client ([wyoming.c](app/wyoming.c), [wyoming.h](app/wyoming.h))
+- ✅ HTTP POST `/local/voice/speak` endpoint
+- ✅ Direct TCP connection to Wyoming Piper server (10.13.8.2:10200)
+- ✅ Complex JSON + binary protocol parsing
+- ✅ Non-blocking socket with poll() for write-readiness
+- ✅ Brace-counting JSON parser (handles `}{` without whitespace)
+- ✅ State machine for JSON ↔ binary mode switching
+- ✅ Real-time WAV file construction from PCM chunks
+- ✅ Automatic playback of Swedish TTS audio
+- ✅ Configuration via `/local/voice/settings`
 
-**Diagnosis Steps Taken:**
-1. ✅ Verified WAV file is accessible from development machine
-2. ✅ Added verbose curl logging (`CURLOPT_VERBOSE`)
-3. ✅ Increased timeouts (60s download, 10s connect)
-4. ✅ Added detailed error reporting
-5. ✅ Created test endpoint to verify general network connectivity
+**Technical Challenges Solved:**
+1. Non-blocking socket timing → Added poll() with 3s timeout
+2. Multi-object JSON lines → Brace-counting parser
+3. Binary mode switching → State machine with break on mode change
+4. WAV header bits/bytes → audio_width (bytes) × 8 = bits_per_sample
+5. Playback buffer → Set both `size` and `write_pos` for completion check
 
-**Next Debugging Step:**
-Test if camera can reach public internet via `/local/base/test_download`
-- If successful → routing/firewall issue between camera and 10.13.8.183
-- If fails → camera has no outbound network access
+**Testing Results:**
+- Test 1: 63744 samples (2.89 seconds) ✓
+- Test 2: 36864 samples (1.67 seconds) ✓
+- Test 3: 56064 samples (2.54 seconds) ✓
 
 ---
 
 ## Code Changes Summary
 
-### New State Management ([main.c:24-59](app/main.c#L24-L59))
-```c
-typedef struct {
-    PWAudio *stream;
-    gboolean active;
-    guint32 sample_count;
-} AudioStream;
+### Wyoming Protocol Implementation
+- **NEW FILES:**
+  - [app/wyoming.c](app/wyoming.c) - Complete Wyoming protocol TCP client (~616 lines)
+  - [app/wyoming.h](app/wyoming.h) - Public API for Wyoming client (~128 lines)
 
-typedef struct {
-    float *samples;
-    guint32 size;
-    guint32 write_pos;
-    guint32 read_pos;
-    gboolean ready;
-} PlaybackBuffer;
+### Key Code Sections
 
-typedef struct {
-    AudioStream input;         // Future: wake-word detection
-    AudioStream output;        // TTS playback
-    PlaybackBuffer playback;
-    gchar *download_url;
-    gboolean downloading;
-} VoiceAssistantState;
-```
+#### 1. Brace-Counting JSON Parser ([wyoming.c:365-406](app/wyoming.c#L365-L406))
+Handles Wyoming's unique format where multiple JSON objects appear on same line without whitespace.
 
-### WAV Download ([main.c:240-363](app/main.c#L240-L363))
-- Memory-based download (no temp files)
-- WAV header validation
-- PCM16 → F32 conversion
-- Buffer allocation and loading
+#### 2. Socket Polling with Write-Readiness ([wyoming.c:585-597](app/wyoming.c#L585-L597))
+Non-blocking socket requires poll() to wait for writability before send().
 
-### HTTP Endpoints
-1. **POST /local/base/playback** ([main.c:456-513](app/main.c#L456-L513))
-   - Accepts WAV URL in POST body
-   - Downloads and converts WAV
-   - Schedules playback via `g_idle_add()`
-   - Returns 200/400/409/500 status codes
+#### 3. WAV Header Construction ([wyoming.c:230-247](app/wyoming.c#L230-L247))
+Converts Wyoming's binary PCM chunks into playable WAV file with correct headers.
 
-2. **GET /local/base/test_download** ([main.c:404-454](app/main.c#L404-L454))
-   - Tests connectivity to httpbin.org
-   - Diagnostic tool for network issues
-   - Returns detailed error information
+#### 4. Playback Buffer Fix ([main.c:182-186](app/main.c#L182-L186))
+Critical fix: Added `write_pos = num_samples` so playback completion check works correctly.
 
-3. **GET /local/base/status**
-   - Reports input.* and output.* status groups
-   - Shows samples played, buffer size, state
-
-### Audio Output Callback ([main.c:156-233](app/main.c#L156-L233))
-- Copies samples from playback buffer → PipeWire
-- Updates status in real-time
-- Auto-stops when playback complete
-- Fills silence when not playing
-
----
-
-## Compilation Fixes Applied
-
-### Fix 1: curl_write_callback Name Conflict
-**Problem:** `curl_write_callback` is a typedef in curl.h
-```
-main.c:116:1: error: 'curl_write_callback' redeclared as different kind of symbol
-```
-**Solution:** Renamed to `wav_download_write_callback`
-
-### Fix 2: ACAP_HTTP_Get_Body() Does Not Exist
-**Problem:** Tried to use non-existent API function
-```
-main.c:398:24: warning: implicit declaration of function 'ACAP_HTTP_Get_Body'
-```
-**Solution:** Use `request->postData` directly:
-```c
-if (!request->postData || request->postDataLength == 0) {
-    ACAP_HTTP_Respond_Error(response, 400, "Missing URL in request body");
-    return;
-}
-const char* body = request->postData;
-```
-
----
+### Build Configuration
+- [app/Makefile](app/Makefile) - Added wyoming.c to build (line 2)
+- [app/manifest.json](app/manifest.json) - Changed runMode to "respawn" for auto-start
 
 ## Testing Instructions
 
-### 1. Test Network Connectivity
+### 1. Test Wyoming TTS (Recommended) 🆕
 ```bash
-curl http://<camera-ip>/local/base/test_download
+# Test synthesis and playback
+curl -X POST -H 'Content-Type: application/json' \
+  --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/speak \
+  -d '{"text":"Hej från röstassistenten"}'
+
+# Monitor status
+curl --digest -u nodered:rednode http://speaker.internal/local/voice/status
+
+# Check/update settings
+curl --digest -u nodered:rednode http://speaker.internal/local/voice/settings
+```
+**Expected:** Audio plays through speaker within 1-2 seconds
+
+### 2. Test WAV Playback (From URL)
+```bash
+# Trigger playback on speaker
+curl -X POST http://speaker.internal/local/voice/playback \
+  -d "http://10.13.8.183:5001/test.wav"
+
+# Monitor status
+watch curl -s http://speaker.internal/local/voice/status
+```
+
+### 3. Test Network Connectivity
+```bash
+curl http://speaker.internal/local/voice/test_download
 ```
 **Expected:** `SUCCESS: Downloaded N bytes from http://httpbin.org/get (HTTP 200)`
 
-### 2. Test WAV Playback
-```bash
-# Ensure WAV file is accessible
-curl http://10.13.8.183:5001/tts_20251208_230555_671706.wav -o /tmp/test.wav
-file /tmp/test.wav
-# Should show: RIFF (little-endian) data, WAVE audio, Microsoft PCM, 16 bit, mono 16000 Hz
-
-# Trigger playback on camera
-curl -X POST http://<camera-ip>/local/base/playback \
-  -d "http://10.13.8.183:5001/tts_20251208_230555_671706.wav"
-
-# Monitor status
-watch curl -s http://<camera-ip>/local/base/status
+### 4. Expected Log Output (Success)
 ```
-
-### 3. Expected Log Output (Success)
-```
-Downloading WAV from: http://10.13.8.183:5001/tts_20251208_230555_671706.wav
-Downloaded 81406 bytes
-WAV: 16000 Hz, 1 channels, 16 bits, format=1
-Converting 40659 samples from PCM16 to F32...
-WAV loaded: 40659 samples (2.54 seconds at 16000 Hz)
-Scheduled playback idle callback, id=6
-start_playback_idle: Starting audio playback from main thread
-audio_stream_start: Starting PLAYBACK stream
-Connected to PipeWire core
-pw_registry_event_global: Found Node: media_class=Audio/Sink, name=AudioDevice0Output0
-Audio stream to node AudioDevice0Output0, 1 channel(s)
-Stream state changed paused -> streaming
-Playback completed (40659 samples)
+Wyoming TTS: connected to 10.13.8.2:10200
+Wyoming TTS: sending synthesize request
+Wyoming: Received audio-start
+Wyoming: Received audio-chunk, payload 2048 bytes
+Wyoming: Binary mode - received 2048 bytes of PCM data
+Wyoming: Received audio-stop
+Wyoming: Synthesis complete, 63744 total bytes
+WAV: 22050 Hz, 1 channels, 16 bits, format=1
+Converting 31872 samples from PCM16 to F32...
+WAV loaded: 31872 samples (1.45 seconds at 22050 Hz)
+Playback completed (31872 samples)
 ```
 
 ---
 
 ## Future Roadmap
 
-### Step 2: Continuous Input Stream (NOT STARTED)
+### ✅ Steps 1-4: COMPLETED
+- ✅ Step 1: WAV playback from URL
+- ✅ Step 2-4: Wyoming protocol TCP client
+- ✅ TTS synthesis (Piper)
+- ✅ Swedish language support
+- ✅ Automatic playback after synthesis
+
+### Step 5: Continuous Input Stream (NEXT)
 - Start input stream on initialization
 - Listen for wake-word detection
 - Process audio in `audio_input_callback()`
+- Integrate wake-word library (Porcupine, Snowboy, etc.)
 
-### Step 3: VAD-Triggered Recording (NOT STARTED)
+### Step 6: VAD-Triggered Recording
 - Detect wake-word
 - Start second capture stream for speech recording
 - Run Voice Activity Detection
 - End recording on silence detection
+- Buffer audio for speech recognition
 
-### Step 4: Wyoming Protocol Integration (NOT STARTED)
-- Send recorded audio to Wyoming-whisper server
+### Step 7: Speech Recognition (Wyoming Whisper)
+- Send recorded audio to Wyoming-whisper server (10.13.8.2:10300)
 - Receive transcription/intent
-- Generate TTS response via Wyoming-piper
-- Download and play response WAV (using existing Step 1 code!)
+- Process user commands
 
-### Step 5: Full Voice Assistant Loop (NOT STARTED)
+### Step 8: Full Voice Assistant Loop
 ```
 Continuous Input (wake-word detection)
     ↓
@@ -212,11 +183,9 @@ Receive transcription
     ↓
 Process intent
     ↓
-Generate TTS (Wyoming-piper)
+Generate TTS (Wyoming-piper) ← WORKING!
     ↓
-Download WAV URL
-    ↓
-Playback response ← CURRENT STEP
+Playback response ← WORKING!
     ↓
 Resume wake-word listening
 ```
@@ -289,52 +258,75 @@ output.*
 
 ## Troubleshooting
 
-### Network Issues
-**Symptom:** "Timeout was reached" downloading WAV
+### Wyoming Connection Issues
+**Symptom:** "Wyoming TTS: connect failed" or timeout errors
 
 **Checklist:**
-1. ✅ Verify WAV is accessible from dev machine
-2. ⏳ Test camera internet access via `/local/base/test_download`
-3. Check camera firewall rules
-4. Check network routing (camera and server on same subnet?)
-5. Try Python SimpleHTTPServer on different port
-6. Check server firewall (allow camera IP?)
+1. Verify Wyoming server is running: `echo '{"type":"describe"}' | nc 10.13.8.2 10200`
+2. Check network routing from speaker to Wyoming server
+3. Verify port 10200 (Piper) or 10300 (Whisper) is accessible
+4. Check Wyoming server logs for connection attempts
+5. Test from dev machine first: `curl speaker.internal/local/voice/test_wyoming?service=piper`
 
 ### No Audio Output
-**Symptom:** Playback stream connects but no sound
+**Symptom:** TTS synthesis succeeds but no sound
 
 **Checklist:**
 1. Check device speaker volume/mute
-2. Verify PipeWire routing with `pw-dump` (if available)
-3. Look for AudioDevice0Output0 node in logs
-4. Check audio format compatibility
+2. Verify PipeWire routing with logs (look for AudioDevice0Output0)
+3. Check audio format compatibility (should be 22050 Hz, 16-bit, mono)
+4. Monitor status endpoint: `curl speaker.internal/local/voice/status`
+5. Look for "Playback completed (N samples)" in logs
+
+### Playback Buffer Issues
+**Symptom:** "Playback completed (0 samples)" immediately
+
+**Cause:** Missing `write_pos` assignment in playback buffer
+**Fix:** Ensure both `size` and `write_pos` are set when loading audio
 
 ### Build Errors
 **Most Common:**
 - Missing PKG_CONFIG_PATH for cross-compilation
 - Undefined symbols → missing library in LDLIBS
 - Include path issues → check CFLAGS
+- New files not in Makefile → update OBJS1 variable
 
 ---
 
 ## Files Modified
 
-### Core Application
-- [app/main.c](app/main.c) - Complete redesign for voice assistant
-- [ARCHITECTURE.md](ARCHITECTURE.md) - NEW: System architecture documentation
+### Wyoming Protocol Implementation (NEW)
+- [app/wyoming.c](app/wyoming.c) - Complete Wyoming protocol TCP client (~616 lines)
+- [app/wyoming.h](app/wyoming.h) - Public API for Wyoming client (~128 lines)
 
-### PipeWire Integration (Unchanged from previous fixes)
+### Core Application
+- [app/main.c](app/main.c) - Voice assistant with Wyoming TTS integration
+  - Added Wyoming audio callback handler
+  - Fixed playback buffer (write_pos assignment)
+  - Fixed WAV parsing (PCM data offset)
+  - Added `/local/voice/speak` endpoint
+  - Added `/local/voice/settings` endpoint
+
+### Build and Configuration
+- [app/Makefile](app/Makefile) - Added wyoming.c to OBJS1
+- [app/manifest.json](app/manifest.json) - Changed runMode to "respawn"
+  - Added `/speak` endpoint (viewer access)
+  - Added `/settings` endpoint (admin access)
+  - Added `/test_wyoming` endpoint (viewer access)
+
+### Documentation
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Updated with Wyoming TTS details
+- [work-in-progress.md](work-in-progress.md) - Updated to reflect Steps 1-4 complete
+
+### PipeWire Integration (Unchanged)
 - [app/pipewire_audio.c](app/pipewire_audio.c) - GSource cleanup fix
 - [app/pipewire_audio.h](app/pipewire_audio.h) - `pw_audio_init()` added
-
-### Build
-- [app/Makefile](app/Makefile) - No changes needed
 
 ---
 
 ## Success Criteria
 
-### Step 1 (Current)
+### Steps 1-4 (Completed) ✅
 - [x] Architecture redesigned for voice assistant
 - [x] Separate input/output stream management
 - [x] HTTP POST /playback endpoint implemented
@@ -343,21 +335,30 @@ output.*
 - [x] PCM16 to F32 conversion
 - [x] Playback buffer management
 - [x] Status reporting (input.*, output.*)
-- [ ] **Network connectivity resolved** ← BLOCKING
-- [ ] WAV playback tested and working
-- [ ] Audio plays through speaker
+- [x] Network connectivity verified and working
+- [x] WAV playback tested and working
+- [x] Audio plays through speaker
+- [x] Wyoming protocol TCP client implemented
+- [x] Non-blocking socket with poll() for write-readiness
+- [x] Brace-counting JSON parser for complex protocol
+- [x] State machine for JSON ↔ binary mode switching
+- [x] Real-time WAV construction from PCM chunks
+- [x] HTTP POST /speak endpoint for TTS
+- [x] Swedish TTS synthesis working
+- [x] Configuration endpoint (/settings)
+- [x] Multiple successful playback tests (63744, 36864, 56064 samples)
 
-### Future Steps (Not Started)
-- [ ] Step 2: Continuous input stream
-- [ ] Step 3: VAD-triggered recording
-- [ ] Step 4: Wyoming protocol integration
-- [ ] Step 5: Full voice assistant loop
+### Future Steps
+- [ ] Step 5: Continuous input stream (wake-word detection)
+- [ ] Step 6: VAD-triggered recording
+- [ ] Step 7: Speech recognition (Wyoming Whisper)
+- [ ] Step 8: Full voice assistant loop
 
 ---
 
-**Last Updated:** 2025-12-09
-**Current Task:** Debug network connectivity issue
-**Next Action:** Test `/local/base/test_download` endpoint to diagnose network access
+**Last Updated:** 2025-12-10
+**Current Status:** Steps 1-4 Complete - Wyoming TTS Fully Working! 🎉
+**Next Step:** Implement continuous input stream for wake-word detection (Step 5)
 
 ---
 

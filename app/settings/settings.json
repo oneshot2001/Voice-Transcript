@@ -1,1 +1,6 @@
-{}
+{
+    "wyoming": "10.13.8.2",
+    "piper": 10200,
+    "whisper": 10300,
+    "language": "sv"
+}

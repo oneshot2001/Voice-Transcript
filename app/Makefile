@@ -1,5 +1,5 @@
 PROG1	= voice
-OBJS1	= main.c ACAP.c cJSON.c pipewire_audio.c
+OBJS1	= main.c ACAP.c cJSON.c pipewire_audio.c wyoming.c
 PROGS	= $(PROG1)
 
 PKGS = glib-2.0 gio-2.0 axevent fcgi libcurl libpipewire-0.3 

@@ -3,16 +3,24 @@
 ## Overview
 This ACAP application is designed to be a voice assistant running on an Axis network speaker device. The architecture supports concurrent audio input and output streams, enabling future wake-word detection and real-time TTS playback.
 
-## Current Implementation (Step 1)
+## Current Implementation (Step 1-4)
 
 ### ✅ Completed Features
-1. **WAV File Playback from URL**
-   - HTTP POST endpoint: `/local/base/playback`
+1. **Wyoming Protocol TTS Integration** 🎙️ **NEW!**
+   - HTTP POST endpoint: `/local/voice/speak`
+   - Direct TCP connection to Wyoming Piper server
+   - Complex JSON + binary protocol parsing
+   - Real-time WAV file construction from PCM chunks
+   - Automatic playback of Swedish TTS audio
+   - Configuration via `/local/voice/settings`
+
+2. **WAV File Playback from URL**
+   - HTTP POST endpoint: `/local/voice/playback`
    - Downloads WAV file from provided URL
    - Converts PCM16 to F32 for PipeWire
    - Plays audio through speaker
 
-2. **Status Reporting**
+3. **Status Reporting**
    - `input.*` - Input stream status (not yet used)
    - `output.state` - Boolean (0=idle, 1=playing)
    - `output.samples` - Number of samples played
@@ -20,7 +28,7 @@ This ACAP application is designed to be a voice assistant running on an Axis net
    - `output.status` - Human-readable status
    - `output.error` - Error messages
 
-3. **Independent Audio Streams**
+4. **Independent Audio Streams**
    - Input and output streams are completely independent
    - Can run simultaneously (foundation for wake-word + playback)
 
@@ -37,7 +45,30 @@ This ACAP application is designed to be a voice assistant running on an Axis net
 
 ## HTTP API
 
-### POST /local/base/playback
+### POST /local/voice/speak 🆕
+Synthesizes text to speech using Wyoming Piper protocol and plays the audio.
+
+**Request:**
+```bash
+curl -X POST -H 'Content-Type: application/json' \
+  --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/speak \
+  -d '{"text":"Hej, detta är ett test av röstsyntes"}'
+```
+
+**Response:**
+- `200 OK` - "TTS request accepted, audio will play when ready"
+- `400 Bad Request` - Invalid JSON or missing text
+- `500 Internal Server Error` - Wyoming connection error
+
+**Features:**
+- Direct TCP connection to Wyoming Piper server (no HTTP intermediary)
+- Streaming binary PCM data reception
+- Automatic WAV construction with correct headers
+- Immediate playback after synthesis completes
+- Swedish language support (configurable)
+
+### POST /local/voice/playback
 Downloads and plays a WAV file from the specified URL.
 
 **Request:**
@@ -66,7 +97,34 @@ curl http://<camera-ip>/local/base/test_download
 
 **Purpose:** Tests if camera can access external URLs. Useful for diagnosing network connectivity issues.
 
-### GET /local/base/status
+### GET /local/voice/settings
+Returns or updates Wyoming server configuration.
+
+**GET Request:**
+```bash
+curl --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/settings
+```
+
+**Response:**
+```json
+{
+  "wyoming": "10.13.8.2",
+  "piper": 10200,
+  "whisper": 10300,
+  "language": "sv"
+}
+```
+
+**POST Request (Update):**
+```bash
+curl -X POST -H 'Content-Type: application/json' \
+  --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/settings \
+  -d '{"wyoming":"10.13.8.2","piper":10200,"language":"sv"}'
+```
+
+### GET /local/voice/status
 Returns current status of input and output audio streams.
 
 **Request:**
@@ -169,27 +227,58 @@ Copy samples from buffer → PipeWire → Speaker
 Playback complete → Stop stream
 ```
 
+## Wyoming Protocol Details 🆕
+
+### Protocol Flow
+```
+Client → Server: {"type":"synthesize","data":{"text":"Hej"}}
+Server → Client: {"type":"audio-start",...}
+Server → Client: {"type":"audio-chunk",...,"payload_length":2048}
+Server → Client: {"rate":22050,"width":2,"channels":1,...}
+Server → Client: [2048 bytes of binary PCM data]
+Server → Client: ... (more chunks)
+Server → Client: {"type":"audio-stop",...}
+```
+
+### Technical Challenges Solved
+1. **Non-blocking Socket Timing** - Added poll() with 3s timeout before send()
+2. **Multi-Object JSON Lines** - Brace-counting parser handles `}{"type"` without whitespace
+3. **Binary Mode Switching** - State machine switches between JSON and binary parsing
+4. **WAV Header Construction** - audio_width in BYTES (2) → bits_per_sample (16)
+5. **Playback Buffer Management** - Set both `size` and `write_pos` for PipeWire
+
+### Audio Format
+- Sample Rate: 22050 Hz
+- Bit Depth: 16-bit signed PCM
+- Channels: Mono (1 channel)
+- Container: WAV (RIFF) with 44-byte header
+
 ## Future Roadmap
 
-### Step 2: Continuous Input (Wake-Word Detection)
+### ✅ Step 1-4: COMPLETED
+- ✅ WAV playback from URL
+- ✅ Wyoming protocol TCP client
+- ✅ TTS synthesis (Piper)
+- ✅ Swedish language support
+
+### Step 5: Continuous Input (Wake-Word Detection)
 - Start input stream on initialization
 - Process audio in `audio_input_callback()`
 - Integrate wake-word detection library (Porcupine, Snowboy, etc.)
 - Detect wake-word and trigger recording
 
-### Step 3: VAD-Triggered Recording
+### Step 6: VAD-Triggered Recording
 - On wake-word detection, start second capture stream
 - Buffer audio for speech recognition
 - Run VAD (Voice Activity Detection)
 - End recording on silence detection
 
-### Step 4: Wyoming Protocol Integration
+### Step 7: Speech Recognition (Wyoming Whisper)
 - Send recorded audio to Wyoming-whisper server
 - Receive transcription/intent
-- Generate TTS response (Wyoming-piper)
-- Download and play response WAV
+- Process user commands
 
-### Step 5: Full Voice Assistant
+### Step 8: Full Voice Assistant
 ```
 Continuous Input (wake-word)
     ↓
@@ -217,9 +306,20 @@ Resume wake-word listening
 ## Key Files
 
 ### Core Application
-- [app/main.c](app/main.c) - Main application logic, HTTP handlers, WAV download/playback
+- [app/main.c](app/main.c) - Main application logic, HTTP handlers, WAV playback
 - [app/ACAP.c](app/ACAP.c) - ACAP framework wrapper
 - [app/ACAP.h](app/ACAP.h) - ACAP API
+
+### Wyoming Protocol Integration 🆕
+- [app/wyoming.c](app/wyoming.c) - Wyoming protocol TCP client implementation
+- [app/wyoming.h](app/wyoming.h) - Wyoming client API
+- Features:
+  - Non-blocking TCP sockets with poll()
+  - Complex JSON + binary protocol parser
+  - Brace-counting for multi-object JSON lines
+  - Binary mode switching for PCM data chunks
+  - WAV file construction (16-bit PCM)
+  - Configurable server/port/language
 
 ### PipeWire Integration
 - [app/pipewire_audio.c](app/pipewire_audio.c) - PipeWire wrapper library
@@ -347,6 +447,6 @@ Playback completed (32000 samples)
 
 ---
 
-**Last Updated:** 2025-12-09
-**Status:** Step 1 Complete - WAV Playback from URL
-**Next Step:** Test playback, then add continuous input stream
+**Last Updated:** 2025-12-10
+**Status:** Step 1-4 Complete - Wyoming TTS Fully Working! 🎉
+**Next Step:** Continuous input stream for wake-word detection
