@@ -3,78 +3,409 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title></title>
+    <title>About</title>
     <link rel="stylesheet" href="css/bootstrap.min.css">
     <link rel="stylesheet" href="css/app.css">
     <script src="js/jquery-3.7.1.min.js"></script>
     <script src="js/bootstrap.bundle.min.js"></script>
+    <style>
+        body {
+            background-color: #f5f7fa;
+        }
+
+        .card {
+            border: none;
+            box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
+            margin-bottom: 1.5rem;
+            transition: box-shadow 0.3s;
+        }
+
+        .card:hover {
+            box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
+        }
+
+        .card-header {
+            background-color: #fff;
+            border-bottom: 2px solid #e9ecef;
+            font-weight: 600;
+        }
+
+        #sidebar-wrapper {
+            min-height: 100vh;
+        }
+
+        .info-grid {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .info-row {
+            display: grid;
+            grid-template-columns: 180px 1fr;
+            gap: 1rem;
+            padding: 0.75rem;
+            background-color: #f8f9fa;
+            border-radius: 0.25rem;
+            border: 1px solid #e9ecef;
+            transition: background-color 0.2s;
+        }
+
+        .info-row:hover {
+            background-color: #e9ecef;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .info-value {
+            color: #212529;
+            word-break: break-word;
+        }
+
+        .info-value a {
+            color: #007bff;
+            text-decoration: none;
+        }
+
+        .info-value a:hover {
+            text-decoration: underline;
+        }
+
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #212529;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #007bff;
+        }
+
+        .badge-custom {
+            font-size: 0.875rem;
+            padding: 0.5rem 0.75rem;
+        }
+
+        .hero-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .hero-section h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .hero-section p {
+            font-size: 1.1rem;
+            opacity: 0.95;
+            margin-bottom: 0;
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+    </style>
 </head>
 <body>
-    <div class="d-flex" id="wrapper">
-        <div class="bg-light border-right" id="sidebar-wrapper">
-			<div class="sidebar-heading">&nbsp;</div>
-			<div class="list-group list-group-flush">
-				<a href="index.html" class="list-group-item list-group-item-action">Video</a>
-				<a href="about.html" class="list-group-item list-group-item-action active">About</a>
-            </div>
-        </div>
-
-        <div id="page-content">
-			<div class="container">
-				<div class="row">
-					<div class="col-12">
-						<br>
-						<h2>Application</h2>
-						<div class="info-grid">
-							<div class="info-row"><div class="info-label">Name:</div><div class="info-value"><span id="name"></span></div></div>
-							<div class="info-row"><div class="info-label">Package:</div><div class="info-value"><span id="package"></span></div></div>
-							<div class="info-row"><div class="info-label">Version:</div><div class="info-value"><span id="version"></span></div></div>
-							<div class="info-row"><div class="info-label">Vendor:</div><div class="info-value"><span id="vendor"></span></div></div>
-							<div class="info-row"><div class="info-label">URL:</div><div class="info-value"><a id="vendorLink" href="" target="_blank"><span id="url"></span></a></div></div>
-							<div class="info-row"><div class="info-label">Device:</div><div class="info-value"><span id="model"></span></div></div>
-							<div class="info-row"><div class="info-label">Firmware:</div><div class="info-value"><span id="firmware"></span></div></div>
-							<div class="info-row"><div class="info-label">Serial:</div><div class="info-value"><span id="serial"></span></div></div>
-							<div class="info-row"><div class="info-label">Chip:</div><div class="info-value"><span id="chip"></span></div></div>
-							<div class="info-row"><div class="info-label">Architecture:</div><div class="info-value"><span id="arch"></span></div></div>
-						</div>
-					</div>
-				</div>
-			</div>
+<div class="d-flex" id="wrapper">
+    <!-- Sidebar -->
+    <div class="bg-light border-right" id="sidebar-wrapper">
+        <div class="sidebar-heading">&nbsp;</div>
+        <div class="list-group list-group-flush">
+            <a href="index.html" class="list-group-item list-group-item-action">Voice Assistant</a>
+            <a href="mqtt.html" class="list-group-item list-group-item-action">MQTT</a>
+            <a href="about.html" class="list-group-item list-group-item-action active">About</a>
         </div>
     </div>
 
+    <div id="page-content-wrapper" class="p-0">
+        <div class="container-fluid p-4">
+
+            <!-- Hero Section -->
+            <div class="hero-section">
+                <h1 id="app-title">Voice Assistant ACAP</h1>
+                <p>Advanced voice control and speech recognition for Axis network devices</p>
+            </div>
+
+            <div class="row">
+                <!-- Application Information -->
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Application Information</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="info-grid">
+                                <div class="info-row">
+                                    <div class="info-label">Application Name</div>
+                                    <div class="info-value"><span id="name"></span></div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Package ID</div>
+                                    <div class="info-value"><code id="package"></code></div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Version</div>
+                                    <div class="info-value">
+                                        <span class="badge bg-primary badge-custom" id="version"></span>
+                                    </div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Vendor</div>
+                                    <div class="info-value"><span id="vendor"></span></div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Vendor URL</div>
+                                    <div class="info-value">
+                                        <a id="vendorLink" href="" target="_blank" rel="noopener noreferrer">
+                                            <span id="url"></span>
+                                        </a>
+                                    </div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Architecture</div>
+                                    <div class="info-value">
+                                        <span class="badge bg-secondary badge-custom" id="arch"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- HTTP API Documentation -->
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">HTTP API Endpoints</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted mb-3">
+                                All endpoints require digest authentication and are relative to <code>/local/voice/</code>
+                            </p>
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Endpoint</th>
+                                            <th>Method</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><code>/speak</code></td>
+                                            <td><span class="badge bg-success">POST</span></td>
+                                            <td>Text-to-speech synthesis<br><small class="text-muted">Body: <code>{"text":"..."}</code></small></td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>/playback</code></td>
+                                            <td><span class="badge bg-success">POST</span></td>
+                                            <td>Play WAV from URL<br><small class="text-muted">Body: <code>{"url":"..."}</code></small></td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>/listen_start</code></td>
+                                            <td><span class="badge bg-success">POST</span></td>
+                                            <td>Start STT listening</td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>/listen_stop</code></td>
+                                            <td><span class="badge bg-success">POST</span></td>
+                                            <td>Stop listening & get transcription</td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>/transcription</code></td>
+                                            <td><span class="badge bg-info">GET</span></td>
+                                            <td>Get last transcription<br><small class="text-muted">Returns: <code>{"text":"..."}</code></small></td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>/status</code></td>
+                                            <td><span class="badge bg-info">GET</span></td>
+                                            <td>Stream status monitoring</td>
+                                        </tr>
+                                        <tr>
+                                            <td><code>/settings</code></td>
+                                            <td><span class="badge bg-info">GET</span> / <span class="badge bg-success">POST</span></td>
+                                            <td>Wyoming server configuration</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Device Information -->
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Device Information</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="info-grid">
+                                <div class="info-row">
+                                    <div class="info-label">Device Model</div>
+                                    <div class="info-value"><span id="model"></span></div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Serial Number</div>
+                                    <div class="info-value"><code id="serial"></code></div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Firmware Version</div>
+                                    <div class="info-value">
+                                        <span class="badge bg-info badge-custom" id="firmware"></span>
+                                    </div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Platform/Chip</div>
+                                    <div class="info-value"><span id="chip"></span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MQTT Topics Documentation -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">MQTT Topics</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted mb-3">
+                                Topics are auto-configured with device serial number: <code>voice/{action}/{SERIAL}</code>
+                            </p>
+                            <h6 class="mt-3 mb-2">Subscribe (Commands to device):</h6>
+                            <ul class="list-unstyled ms-3">
+                                <li class="mb-2">
+                                    <code>voice/speak/{SERIAL}</code><br>
+                                    <small class="text-muted">Payload: <code>{"text":"..."}</code></small>
+                                </li>
+                                <li class="mb-2">
+                                    <code>voice/playback/{SERIAL}</code><br>
+                                    <small class="text-muted">Payload: <code>{"url":"..."}</code></small>
+                                </li>
+                                <li class="mb-2">
+                                    <code>voice/listen/start/{SERIAL}</code><br>
+                                    <small class="text-muted">Payload: <code>{}</code></small>
+                                </li>
+                                <li class="mb-2">
+                                    <code>voice/listen/stop/{SERIAL}</code><br>
+                                    <small class="text-muted">Payload: <code>{}</code></small>
+                                </li>
+                            </ul>
+                            <h6 class="mt-3 mb-2">Publish (Events from device):</h6>
+                            <ul class="list-unstyled ms-3">
+                                <li class="mb-2">
+                                    <code>voice/connect/{SERIAL}</code><br>
+                                    <small class="text-muted">Published on startup with device info</small>
+                                </li>
+                                <li class="mb-2">
+                                    <code>voice/transcript/{SERIAL}</code><br>
+                                    <small class="text-muted">Payload: <code>{"text":"..."}</code></small>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Documentation Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Documentation & Support</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">
+                                For more information about the Wyoming Protocol, visit:
+                            </p>
+                            <ul class="list-unstyled">
+                                <li class="mb-2">
+                                    🔗 <a href="https://github.com/rhasspy/wyoming" target="_blank" rel="noopener noreferrer">
+                                        Wyoming Protocol GitHub
+                                    </a>
+                                </li>
+                                <li class="mb-2">
+                                    🔗 <a href="https://github.com/rhasspy/piper" target="_blank" rel="noopener noreferrer">
+                                        Piper TTS GitHub
+                                    </a>
+                                </li>
+                                <li class="mb-2">
+                                    🔗 <a href="https://github.com/rhasspy/faster-whisper-server" target="_blank" rel="noopener noreferrer">
+                                        Faster Whisper Server
+                                    </a>
+                                </li>
+                            </ul>
+                            <hr>
+                            <div class="text-center mt-3">
+                                <p class="text-muted mb-2">If you find this ACAP useful, consider supporting development:</p>
+                                <a href="https://www.buymeacoffee.com/fredjuhlinl" target="_blank" rel="noopener noreferrer" class="btn btn-warning">
+                                    ☕ Buy Me a Coffee
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
 <script>
 $(document).ready(function() {
-	$.ajax({
-		type: "GET",
-		url: "app",
-		dataType: "json",
-		cache: false,
-		success: function(app) {
-			// Fill page title + sidebar
-			document.title = app.manifest.acapPackageConf.setup.friendlyName;
-			$(".sidebar-heading").text(app.manifest.acapPackageConf.setup.friendlyName);
+    $.ajax({
+        type: "GET",
+        url: "app",
+        dataType: "json",
+        cache: false,
+        success: function(app) {
+            // Fill page title + sidebar
+            const appName = app.manifest.acapPackageConf.setup.friendlyName;
+            document.title = appName + ' - About';
+            $(".sidebar-heading").text(appName);
+            $("#app-title").text(appName);
 
-			// Fill application info
-			$("#name").text(app.manifest.acapPackageConf.setup.friendlyName);
-			$("#package").text(app.manifest.acapPackageConf.setup.appName);
-			$("#version").text(app.manifest.acapPackageConf.setup.version);
-			$("#vendor").text(app.manifest.acapPackageConf.setup.vendor);
-			$("#url").text(app.manifest.acapPackageConf.setup.vendorUrl);
-			$("#vendorLink").attr("href", app.manifest.acapPackageConf.setup.vendorUrl);
+            // Fill application info
+            $("#name").text(appName);
+            $("#package").text(app.manifest.acapPackageConf.setup.appName);
+            $("#version").text(app.manifest.acapPackageConf.setup.version);
+            $("#vendor").text(app.manifest.acapPackageConf.setup.vendor);
 
-			// Fill device info from "device" section
-			$("#model").text(app.device.model);
-			$("#firmware").text(app.device.firmware);
-			$("#serial").text(app.device.serial);
-			$("#chip").text(app.device.platform);
-			// Use architecture from manifest if present, else from device
-			$("#arch").text(app.manifest.acapPackageConf.setup.architecture || app.device.chip);
-		},
-		error: function(response) {
-			alert("Failed to load: " + response.statusText);
-		}
-	});
+            const vendorUrl = app.manifest.acapPackageConf.setup.vendorUrl;
+            $("#url").text(vendorUrl);
+            $("#vendorLink").attr("href", vendorUrl);
+
+            // Fill device info
+            $("#model").text(app.device.model);
+            $("#firmware").text(app.device.firmware);
+            $("#serial").text(app.device.serial);
+            $("#chip").text(app.device.platform);
+
+            // Use architecture from manifest if present, else from device
+            const arch = app.manifest.acapPackageConf.setup.architecture || app.device.chip;
+            $("#arch").text(arch);
+        },
+        error: function(response) {
+            const alertHtml = '<div class="alert alert-danger m-4" role="alert">' +
+                'Failed to load application information: ' + response.statusText +
+                '</div>';
+            $('#page-content-wrapper .container-fluid').prepend(alertHtml);
+        }
+    });
 });
 </script>
 </body>

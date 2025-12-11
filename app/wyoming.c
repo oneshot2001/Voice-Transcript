@@ -24,6 +24,7 @@
 #define LOG(fmt, args...)    { syslog(LOG_INFO, fmt, ## args); printf(fmt, ## args);}
 #define LOG_WARN(fmt, args...)    { syslog(LOG_WARNING, fmt, ## args); printf(fmt, ## args);}
 #define LOG_TRACE(fmt, args...)    { syslog(LOG_INFO, fmt, ## args); printf(fmt, ## args); }
+//#define LOG_TRACE(fmt, args...)    {}
 
 #define WYOMING_BUFFER_SIZE 65536
 
@@ -68,6 +69,10 @@ typedef struct {
     // Request tracking
     gboolean awaiting_response;
     char pending_request[256];
+
+    // Protocol handshake
+    gboolean tcp_connected;         // TCP socket connection complete
+    gboolean handshake_received;    // Wyoming protocol handshake received
 
     // Error tracking
     char error_msg[256];
@@ -156,12 +161,19 @@ static void wyoming_process_message(WyomingConnection *conn, const char *message
     // Parse JSON message
     cJSON *json = cJSON_Parse(message);
     if (!json) {
-        LOG_WARN("Wyoming: Failed to parse JSON message\n");
+        LOG_WARN("Wyoming: Failed to parse JSON message: %s\n", message);
         return;
     }
 
     // Check message type
     cJSON *type = cJSON_GetObjectItem(json, "type");
+
+    // Log received message type for debugging
+    if (type && cJSON_IsString(type)) {
+        LOG("Wyoming %s: Received message type '%s'\n",
+            conn->type == WYOMING_SERVICE_PIPER ? "TTS" : "ASR",
+            type->valuestring);
+    }
 
     // Check if this is audio format metadata (no "type" field)
     if (!type) {
@@ -195,8 +207,11 @@ static void wyoming_process_message(WyomingConnection *conn, const char *message
 
     // Handle different message types
     if (strcmp(type->valuestring, "info") == 0) {
-        LOG("Wyoming: Received server info\n");
-        // Server is ready
+        LOG("Wyoming %s: Received server info handshake - connection ready\n",
+            conn->type == WYOMING_SERVICE_PIPER ? "Piper" : "Whisper");
+        // Mark handshake complete - connection is now ready for requests
+        conn->handshake_received = TRUE;
+        wyoming_set_state(conn, WYOMING_STATE_CONNECTED, NULL);
     }
     else if (strcmp(type->valuestring, "audio-start") == 0) {
         LOG("Wyoming: TTS audio-start\n");
@@ -204,19 +219,31 @@ static void wyoming_process_message(WyomingConnection *conn, const char *message
         conn->audio_buffer_size = 0;
     }
     else if (strcmp(type->valuestring, "audio-chunk") == 0) {
-        // Extract payload_length - number of PCM bytes that will follow
-        // Note: The audio format metadata comes as a separate JSON line AFTER this message
-        // Format: {"type":"audio-chunk",...,"payload_length":N}
-        //         {"rate":22050,"width":2,"channels":1,...}
-        //         [N bytes of raw PCM data]
+        // Extract audio format metadata (rate, width, channels)
+        // These fields are present in the audio-chunk message itself
+        cJSON *rate = cJSON_GetObjectItem(json, "rate");
+        cJSON *width = cJSON_GetObjectItem(json, "width");
+        cJSON *channels = cJSON_GetObjectItem(json, "channels");
 
+        if (rate && cJSON_IsNumber(rate)) {
+            conn->audio_rate = rate->valueint;
+        }
+        if (width && cJSON_IsNumber(width)) {
+            conn->audio_width = width->valueint;
+        }
+        if (channels && cJSON_IsNumber(channels)) {
+            conn->audio_channels = channels->valueint;
+        }
+
+        LOG("Wyoming: audio-chunk format: %d Hz, %d-bit, %d channels\n",
+            conn->audio_rate, conn->audio_width * 8, conn->audio_channels);
+
+        // Extract payload_length - number of PCM bytes that will follow
         cJSON *payload_length = cJSON_GetObjectItem(json, "payload_length");
         if (payload_length && cJSON_IsNumber(payload_length)) {
-            // Mark that we're expecting one more JSON line (metadata) before binary data
             conn->binary_bytes_expected = payload_length->valueint;
             conn->binary_bytes_received = 0;
-            // Stay in JSON mode to read the metadata line
-            LOG("Wyoming: audio-chunk expects %zu bytes of PCM (after metadata)\n", conn->binary_bytes_expected);
+            LOG("Wyoming: audio-chunk expects %zu bytes of PCM data\n", conn->binary_bytes_expected);
         } else {
             LOG_WARN("Wyoming: audio-chunk missing payload_length field\n");
         }
@@ -287,14 +314,38 @@ static void wyoming_process_message(WyomingConnection *conn, const char *message
         }
 
         conn->awaiting_response = FALSE;
+
+        // BUGFIX: Clear receive buffer and reset parser state after TTS completes
+        // This ensures the next TTS request starts with a clean slate
+        conn->rx_length = 0;
+        conn->parse_state = WYOMING_PARSE_JSON;
+        conn->binary_bytes_expected = 0;
+        conn->binary_bytes_received = 0;
+        LOG("Wyoming TTS: Audio complete, buffer and parser state reset\n");
     }
     else if (strcmp(type->valuestring, "transcript") == 0) {
-        LOG("Wyoming: ASR transcript result\n");
+        LOG("Wyoming ASR: Received transcript message\n");
         cJSON *text = cJSON_GetObjectItem(json, "text");
-        if (text && cJSON_IsString(text) && wyoming_state.transcript_callback) {
-            wyoming_state.transcript_callback(text->valuestring);
+        if (text && cJSON_IsString(text)) {
+            LOG("Wyoming ASR: Transcript text: '%s'\n", text->valuestring);
+            if (wyoming_state.transcript_callback) {
+                LOG("Wyoming ASR: Calling transcript callback\n");
+                wyoming_state.transcript_callback(text->valuestring);
+            } else {
+                LOG_WARN("Wyoming ASR: No transcript callback registered!\n");
+            }
+        } else {
+            LOG_WARN("Wyoming ASR: Transcript message has no 'text' field\n");
         }
         conn->awaiting_response = FALSE;
+
+        // BUGFIX: Clear receive buffer and reset parser state after transcription completes
+        // This ensures the next ASR request starts with a clean slate
+        conn->rx_length = 0;
+        conn->parse_state = WYOMING_PARSE_JSON;
+        conn->binary_bytes_expected = 0;
+        conn->binary_bytes_received = 0;
+        LOG("Wyoming ASR: Transcription complete, buffer and parser state reset\n");
     }
     else if (strcmp(type->valuestring, "error") == 0) {
         cJSON *text = cJSON_GetObjectItem(json, "text");
@@ -338,8 +389,11 @@ static gboolean wyoming_poll_callback(gpointer user_data) {
     }
 
     if (ret == 0) {
+        // No events
         return G_SOURCE_CONTINUE;
     }
+
+    LOG("Wyoming poll: %d fd(s) have events\n", ret);
 
     // Process events
     for (int i = 0; i < nfds; i++) {
@@ -370,6 +424,8 @@ static gboolean wyoming_poll_callback(gpointer user_data) {
 
         // Read data
         if (fds[i].revents & POLLIN) {
+            LOG("Wyoming %s: POLLIN event, attempting to read...\n",
+                conn->type == WYOMING_SERVICE_PIPER ? "TTS" : "ASR");
             char buffer[4096];
             ssize_t n = recv(conn->socket_fd, buffer, sizeof(buffer) - 1, 0);
 
@@ -390,6 +446,9 @@ static gboolean wyoming_poll_callback(gpointer user_data) {
                 conn->socket_fd = -1;
                 continue;
             }
+
+            LOG("Wyoming %s: Received %zd bytes from socket\n",
+                conn->type == WYOMING_SERVICE_PIPER ? "TTS" : "ASR", n);
 
             // Append to receive buffer
             if (conn->rx_length + n < WYOMING_BUFFER_SIZE) {
@@ -458,7 +517,7 @@ static gboolean wyoming_poll_callback(gpointer user_data) {
                             }
 
                             if (remaining == 0) {
-                                LOG_TRACE("Wyoming parser: no more data (remaining=0)\n");
+//                                LOG_TRACE("Wyoming parser: no more data (remaining=0)\n");
                                 break;
                             }
 
@@ -471,7 +530,7 @@ static gboolean wyoming_poll_callback(gpointer user_data) {
 
                             // Try to parse a JSON object
                             if (*parse_ptr == '{') {
-                                LOG_TRACE("Wyoming parser: found '{', remaining=%zu\n", remaining);
+//                                LOG_TRACE("Wyoming parser: found '{', remaining=%zu\n", remaining);
                                 // Find the end of this JSON object
                                 int brace_count = 0;
                                 char *json_start = parse_ptr;
@@ -492,24 +551,126 @@ static gboolean wyoming_poll_callback(gpointer user_data) {
                                 if (brace_count == 0) {
                                     // We have a complete JSON object
                                     size_t json_len = json_end - json_start;
-                                    LOG_TRACE("Wyoming parser: complete JSON object, len=%zu\n", json_len);
+//                                    LOG_TRACE("Wyoming parser: complete JSON object, len=%zu\n", json_len);
 
+                                    // Check if this JSON has data_length or payload_length (Wyoming event protocol)
+                                    // Format: {"type":"...","version":"...","data_length":N,"payload_length":M}
+                                    //         [N bytes of JSON data if data_length present]
+                                    //         [M bytes of binary payload if payload_length present]
                                     char saved_char = *json_end;
                                     *json_end = '\0';
-                                    wyoming_process_message(conn, json_start, json_len);
+                                    cJSON *header_json = cJSON_Parse(json_start);
                                     *json_end = saved_char;
+
+                                    char *merged_json = NULL;
+                                    size_t merged_len = json_len;
+                                    bool did_merge = false;
+
+                                    if (header_json) {
+                                        cJSON *data_length_field = cJSON_GetObjectItem(header_json, "data_length");
+                                        cJSON *payload_length_field = cJSON_GetObjectItem(header_json, "payload_length");
+
+                                        // Handle data_length: read additional JSON bytes and merge
+                                        if (data_length_field && cJSON_IsNumber(data_length_field)) {
+                                            int data_length = data_length_field->valueint;
+//                                            LOG_TRACE("Wyoming: Header has data_length=%d\n", data_length);
+
+                                            // Skip whitespace after header JSON to find data JSON start
+                                            char *data_ptr = json_end;
+                                            while (data_ptr < conn->rx_buffer + conn->rx_length &&
+                                                   (*data_ptr == ' ' || *data_ptr == '\t' || *data_ptr == '\r' || *data_ptr == '\n')) {
+                                                data_ptr++;
+                                            }
+                                            size_t data_start = data_ptr - conn->rx_buffer;
+
+//                                            LOG("Wyoming: data_start=%zu (after skipping whitespace), rx_length=%zu, need=%d\n", data_start, conn->rx_length, data_length);
+
+                                            // Check if we have enough data in buffer
+                                            if (data_start + data_length <= conn->rx_length) {
+                                                // Parse data JSON
+                                                char saved_data_char = conn->rx_buffer[data_start + data_length];
+                                                conn->rx_buffer[data_start + data_length] = '\0';
+                                                cJSON *data_json = cJSON_Parse(conn->rx_buffer + data_start);
+                                                conn->rx_buffer[data_start + data_length] = saved_data_char;
+
+                                                if (data_json) {
+                                                    // Merge data JSON into header JSON by duplicating each field
+                                                    cJSON *item = data_json->child;
+                                                    while (item) {
+                                                        if (item->string) {
+                                                            // Duplicate and add each field from data_json to header_json
+                                                            cJSON *dup = cJSON_Duplicate(item, 1);  // Deep copy
+                                                            if (dup) {
+                                                                cJSON_AddItemToObject(header_json, item->string, dup);
+//                                                                LOG_TRACE("Wyoming: Merged field '%s' from data JSON\n", item->string);
+                                                            }
+                                                        }
+                                                        item = item->next;
+                                                    }
+                                                    cJSON_Delete(data_json);
+
+                                                    // Update json_end to skip consumed data
+                                                    json_end = conn->rx_buffer + data_start + data_length;
+//                                                    LOG_TRACE("Wyoming: Merged data, new json_end offset=%zu\n", data_start + data_length);
+                                                    did_merge = true;  // Mark that we successfully merged
+                                                }
+                                            } else {
+                                                LOG_TRACE("Wyoming: Not enough data yet for data_length=%d\n", data_length);
+                                                cJSON_Delete(header_json);
+                                                break;  // Wait for more data
+                                            }
+                                        }
+
+                                        // Handle payload_length: set up binary parsing mode
+                                        if (payload_length_field && cJSON_IsNumber(payload_length_field)) {
+                                            conn->binary_bytes_expected = payload_length_field->valueint;
+                                            conn->binary_bytes_received = 0;
+                                            conn->parse_state = WYOMING_PARSE_BINARY;
+                                            LOG_TRACE("Wyoming: Expecting %zu bytes of binary payload\n", conn->binary_bytes_expected);
+                                        }
+
+                                        // Only create merged JSON if we actually merged data
+                                        if (did_merge) {
+                                            merged_json = cJSON_PrintUnformatted(header_json);
+                                            if (merged_json) {
+                                                merged_len = strlen(merged_json);
+//                                                LOG("Wyoming: Merged JSON ready: %s\n", merged_json);
+                                            }
+                                        }
+                                        cJSON_Delete(header_json);
+                                    }
+
+                                    // Call wyoming_process_message with merged JSON if available
+                                    if (merged_json) {
+                                        LOG("Wyoming: Processing merged JSON (len=%zu)\n", merged_len);
+                                        wyoming_process_message(conn, merged_json, merged_len);
+                                        free(merged_json);
+                                    } else {
+                                        LOG("Wyoming: Processing original JSON (no merge needed)\n");
+                                        saved_char = *json_end;
+                                        *json_end = '\0';
+                                        wyoming_process_message(conn, json_start, json_len);
+                                        *json_end = saved_char;
+                                    }
+
+                                    // BUGFIX: Check if buffer was cleared by message processing
+                                    // (happens after transcript or audio-stop messages)
+                                    if (conn->rx_length == 0) {
+                                        LOG("Wyoming: Buffer cleared by message handler, stopping parse loop\n");
+                                        break;  // Exit loop to avoid overwriting rx_length with 'remaining'
+                                    }
 
                                     // Calculate bytes consumed BEFORE updating parse_ptr
                                     size_t consumed = json_end - parse_ptr;
-                                    LOG_TRACE("Wyoming parser: consumed=%zu, remaining before=%zu\n", consumed, remaining);
+//                                    LOG_TRACE("Wyoming parser: consumed=%zu, remaining before=%zu\n", consumed, remaining);
                                     remaining -= consumed;
                                     parse_ptr = json_end;
-                                    LOG_TRACE("Wyoming parser: remaining after=%zu\n", remaining);
+//                                    LOG_TRACE("Wyoming parser: remaining after=%zu\n", remaining);
                                     parsed_something = true;
 
                                     // Check if we should switch to binary mode
                                     if (conn->parse_state == WYOMING_PARSE_BINARY) {
-                                        LOG_TRACE("Wyoming parser: switching to binary mode, breaking from JSON loop\n");
+//                                        LOG_TRACE("Wyoming parser: switching to binary mode, breaking from JSON loop\n");
                                         break;  // Exit JSON parsing loop, next iteration will handle binary data
                                     }
                                 } else {
@@ -527,7 +688,8 @@ static gboolean wyoming_poll_callback(gpointer user_data) {
                         }
 
                         // Move unparsed data to start of buffer
-                        if (parse_ptr > conn->rx_buffer) {
+                        // BUGFIX: Only update rx_length if it wasn't cleared by message handler
+                        if (conn->rx_length > 0 && parse_ptr > conn->rx_buffer) {
                             size_t consumed = parse_ptr - conn->rx_buffer;
                             if (remaining > 0) {
                                 memmove(conn->rx_buffer, parse_ptr, remaining);
@@ -708,17 +870,17 @@ int wyoming_connect(WyomingServiceType service) {
     conn->binary_bytes_expected = 0;
     conn->binary_bytes_received = 0;
     conn->awaiting_response = FALSE;
+    conn->tcp_connected = TRUE;
+    conn->handshake_received = FALSE;
 
-    // If connected immediately (unlikely but possible)
-    if (ret == 0) {
-        wyoming_set_state(conn, WYOMING_STATE_CONNECTED, NULL);
-    } else {
-        // Will complete asynchronously, check in poll callback
-        // For now, assume connection succeeds
-        wyoming_set_state(conn, WYOMING_STATE_CONNECTED, NULL);
-    }
+    // Assume connection succeeds (works for local connections)
+    // The "info" handshake will be received in the poll callback
+    wyoming_set_state(conn, WYOMING_STATE_CONNECTED, NULL);
 
-    LOG("Wyoming connecting to %s:%d\n", conn->server_ip, conn->port);
+    LOG("Wyoming %s: connecting to %s:%d (fd=%d)\n",
+        conn->type == WYOMING_SERVICE_PIPER ? "Piper" : "Whisper",
+        conn->server_ip, conn->port, sockfd);
+
     return 0;
 }
 
@@ -854,6 +1016,117 @@ int wyoming_tts_synthesize(const char* text, const char* voice) {
 }
 
 /*-----------------------------------------------------
+ * Wyoming Event Protocol Helpers
+ *-----------------------------------------------------*/
+
+// Send a Wyoming protocol event with optional data and payload
+// Format: JSON header\n [data JSON if present] [binary payload if present]
+static int wyoming_send_event(WyomingConnection *conn, const char* event_type,
+                               const char* data_json, const unsigned char* payload, size_t payload_length) {
+    // Build JSON header
+    cJSON *header = cJSON_CreateObject();
+    cJSON_AddStringToObject(header, "type", event_type);
+    cJSON_AddStringToObject(header, "version", "1.0.0");
+
+    // Add data_length if we have data JSON
+    if (data_json) {
+        cJSON_AddNumberToObject(header, "data_length", strlen(data_json));
+    }
+
+    // Add payload_length if we have payload
+    if (payload && payload_length > 0) {
+        cJSON_AddNumberToObject(header, "payload_length", (double)payload_length);
+    }
+
+    char *header_str = cJSON_PrintUnformatted(header);
+    cJSON_Delete(header);
+
+    if (!header_str) {
+        LOG_WARN("Wyoming: failed to create event header\n");
+        return -1;
+    }
+
+    // Send JSON header with newline
+    size_t header_len = strlen(header_str);
+    char *message = malloc(header_len + 2);
+    strcpy(message, header_str);
+    message[header_len] = '\n';
+    message[header_len + 1] = '\0';
+
+    LOG_TRACE("Wyoming: Sending event: %s\n", header_str);
+    free(header_str);
+
+    // Wait for socket to be writable
+    struct pollfd pfd = {
+        .fd = conn->socket_fd,
+        .events = POLLOUT,
+        .revents = 0
+    };
+
+    int poll_ret = poll(&pfd, 1, 3000);  // 3 second timeout
+    if (poll_ret <= 0) {
+        free(message);
+        LOG_WARN("Wyoming: socket not ready for writing (timeout or error)\n");
+        return -1;
+    }
+
+    // Check for socket errors
+    if (pfd.revents & (POLLERR | POLLHUP)) {
+        int error = 0;
+        socklen_t len = sizeof(error);
+        if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0) {
+            LOG_WARN("Wyoming: socket error after poll: %s\n", strerror(error));
+        } else {
+            LOG_WARN("Wyoming: socket error after poll (POLLERR|POLLHUP)\n");
+        }
+        free(message);
+        return -1;
+    }
+
+    // Send header
+    ssize_t sent = send(conn->socket_fd, message, header_len + 1, 0);
+    free(message);
+
+    if (sent < 0) {
+        LOG_WARN("Wyoming: send failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    // Send data JSON if present
+    if (data_json) {
+        size_t data_len = strlen(data_json);
+        sent = send(conn->socket_fd, data_json, data_len, 0);
+        if (sent < 0) {
+            LOG_WARN("Wyoming: send data failed: %s\n", strerror(errno));
+            return -1;
+        }
+    }
+
+    // Send payload if present
+    if (payload && payload_length > 0) {
+        size_t total_sent = 0;
+        while (total_sent < payload_length) {
+            // Wait for socket to be writable
+            poll_ret = poll(&pfd, 1, 5000);  // 5 second timeout
+            if (poll_ret <= 0) {
+                LOG_WARN("Wyoming: socket timeout while sending payload\n");
+                return -1;
+            }
+
+            ssize_t chunk_sent = send(conn->socket_fd, payload + total_sent, payload_length - total_sent, 0);
+            if (chunk_sent < 0) {
+                LOG_WARN("Wyoming: payload send failed: %s\n", strerror(errno));
+                return -1;
+            }
+            total_sent += chunk_sent;
+        }
+        LOG_TRACE("Wyoming: Sent payload (%zu bytes)\n", total_sent);
+    }
+
+    return 0;
+}
+
+/*-----------------------------------------------------
  * ASR Operations (Whisper)
  *-----------------------------------------------------*/
 
@@ -863,11 +1136,129 @@ int wyoming_asr_transcribe(const unsigned char* audio_data, size_t audio_length)
         return -1;
     }
 
-    // TODO: Implement Wyoming ASR protocol
-    // 1. Send transcribe request with audio data
-    // 2. Receive transcript response
-    // 3. Call transcript_callback when complete
+    WyomingConnection *conn = &wyoming_state.whisper;
 
-    LOG("Wyoming ASR: transcribe request (TODO)\n");
+    if (!audio_data || audio_length == 0) {
+        LOG_WARN("Wyoming ASR: empty audio data\n");
+        return -1;
+    }
+
+    if (conn->awaiting_response) {
+        LOG_WARN("Wyoming ASR: previous request still in progress, canceling it\n");
+        conn->awaiting_response = FALSE;
+    }
+
+    // Parse WAV header to get audio format
+    if (audio_length < 44) {
+        LOG_WARN("Wyoming ASR: audio data too small (need at least 44 bytes for WAV header)\n");
+        return -1;
+    }
+
+    typedef struct __attribute__((packed)) {
+        char riff[4];
+        uint32_t file_size;
+        char wave[4];
+        char fmt[4];
+        uint32_t fmt_size;
+        uint16_t audio_format;
+        uint16_t num_channels;
+        uint32_t sample_rate;
+        uint32_t byte_rate;
+        uint16_t block_align;
+        uint16_t bits_per_sample;
+        char data[4];
+        uint32_t data_size;
+    } WavHeader;
+
+    const WavHeader *wav_header = (const WavHeader *)audio_data;
+
+    // Verify WAV format
+    if (memcmp(wav_header->riff, "RIFF", 4) != 0 || memcmp(wav_header->wave, "WAVE", 4) != 0) {
+        LOG_WARN("Wyoming ASR: invalid WAV file format\n");
+        return -1;
+    }
+
+    uint32_t pcm_data_size = wav_header->data_size;
+    const unsigned char *pcm_data = audio_data + 44;
+
+    LOG("Wyoming ASR: Transcribing %d Hz, %d-bit, %d ch, %u bytes PCM\n",
+        wav_header->sample_rate, wav_header->bits_per_sample, wav_header->num_channels, pcm_data_size);
+
+    // Step 1: Send Transcribe event with language setting
+    // Creates: {"type":"transcribe","version":"1.0.0","data_length":N}
+    //          {"language":"sv"}
+    cJSON *transcribe_data = cJSON_CreateObject();
+    if (conn->language[0] != '\0') {
+        cJSON_AddStringToObject(transcribe_data, "language", conn->language);
+    }
+    char *transcribe_json = cJSON_PrintUnformatted(transcribe_data);
+    cJSON_Delete(transcribe_data);
+
+    if (!transcribe_json) {
+        LOG_WARN("Wyoming ASR: failed to create transcribe JSON\n");
+        return -1;
+    }
+
+    LOG("Wyoming ASR: Sending transcribe event (language=%s)\n", conn->language);
+    if (wyoming_send_event(conn, "transcribe", transcribe_json, NULL, 0) != 0) {
+        free(transcribe_json);
+        LOG_WARN("Wyoming ASR: failed to send transcribe event\n");
+        return -1;
+    }
+    free(transcribe_json);
+
+    // Step 2: Send AudioChunk event with PCM data as payload
+    // Creates: {"type":"audio-chunk","version":"1.0.0","data_length":N,"payload_length":M}
+    //          {"rate":16000,"width":2,"channels":1,"timestamp":null}
+    //          <PCM payload bytes>
+    cJSON *chunk_data = cJSON_CreateObject();
+    cJSON_AddNumberToObject(chunk_data, "rate", wav_header->sample_rate);
+    cJSON_AddNumberToObject(chunk_data, "width", wav_header->bits_per_sample / 8);
+    cJSON_AddNumberToObject(chunk_data, "channels", wav_header->num_channels);
+    cJSON_AddNullToObject(chunk_data, "timestamp");
+
+    char *chunk_json = cJSON_PrintUnformatted(chunk_data);
+    cJSON_Delete(chunk_data);
+
+    if (!chunk_json) {
+        LOG_WARN("Wyoming ASR: failed to create audio-chunk JSON\n");
+        return -1;
+    }
+
+    LOG("Wyoming ASR: Sending audio-chunk event (%u bytes PCM)\n", pcm_data_size);
+    if (wyoming_send_event(conn, "audio-chunk", chunk_json, pcm_data, pcm_data_size) != 0) {
+        free(chunk_json);
+        LOG_WARN("Wyoming ASR: failed to send audio-chunk event\n");
+        return -1;
+    }
+    free(chunk_json);
+
+    // Step 3: Send AudioStop event (triggers transcription on server)
+    // Creates: {"type":"audio-stop","version":"1.0.0","data_length":N}
+    //          {"timestamp":null}
+    cJSON *stop_data = cJSON_CreateObject();
+    cJSON_AddNullToObject(stop_data, "timestamp");
+
+    char *stop_json = cJSON_PrintUnformatted(stop_data);
+    cJSON_Delete(stop_data);
+
+    if (!stop_json) {
+        LOG_WARN("Wyoming ASR: failed to create audio-stop JSON\n");
+        return -1;
+    }
+
+    LOG("Wyoming ASR: Sending audio-stop event (triggering transcription)\n");
+    if (wyoming_send_event(conn, "audio-stop", stop_json, NULL, 0) != 0) {
+        free(stop_json);
+        LOG_WARN("Wyoming ASR: failed to send audio-stop event\n");
+        return -1;
+    }
+    free(stop_json);
+
+    LOG("Wyoming ASR: All events sent, waiting for transcript\n");
+
+    conn->awaiting_response = TRUE;
+    snprintf(conn->pending_request, sizeof(conn->pending_request), "ASR: %zu bytes", audio_length);
+
     return 0;
 }

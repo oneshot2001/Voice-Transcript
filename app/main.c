@@ -7,11 +7,16 @@
 #include <signal.h>
 #include <math.h>
 #include <curl/curl.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
 
 #include "pipewire_audio.h"
 #include "wyoming.h"
 #include "ACAP.h"
 #include "cJSON.h"
+#include "MQTT.h"
 
 #define APP_PACKAGE	"voice"
 
@@ -21,6 +26,10 @@
 //#define LOG_TRACE(fmt, args...)    {}
 
 #define AUDIO_SAMPLE_RATE 16000
+
+// Forward declarations
+void start_recording(void);
+void stop_recording(void);
 
 // =============================================================================
 // VOICE ASSISTANT STATE MANAGEMENT
@@ -43,6 +52,15 @@ typedef struct {
     gboolean ready;            // Ready for playback
 } PlaybackBuffer;
 
+// Recording buffer for STT
+typedef struct {
+    float *samples;            // Audio samples (F32)
+    guint32 capacity;          // Buffer capacity in samples
+    guint32 size;              // Current number of samples recorded
+    guint32 sample_rate;       // Sample rate (16000)
+    gboolean recording;        // Currently recording?
+} RecordingBuffer;
+
 // Main application state
 typedef struct {
     // Audio streams (independent)
@@ -51,6 +69,9 @@ typedef struct {
 
     // Playback buffer
     PlaybackBuffer playback;
+
+    // Recording buffer (for STT)
+    RecordingBuffer recording;
 
     // Download state
     gchar *download_url;
@@ -64,6 +85,7 @@ typedef struct {
 } VoiceAssistantState;
 
 static VoiceAssistantState va_state = {0};
+static char device_serial[32] = {0};  // Device serial number
 
 // =============================================================================
 // UTILITY FUNCTIONS
@@ -116,6 +138,32 @@ wyoming_state_callback(WyomingServiceType service, WyomingConnectionState state,
     if (error_msg) {
         ACAP_STATUS_SetString("wyoming", "error", error_msg);
     }
+}
+
+// Wyoming ASR transcript callback - receives transcription from Whisper
+void
+wyoming_transcript_callback(const char* text) {
+    LOG("Wyoming STT: Received transcription: %s\n", text);
+
+    // Update status
+    ACAP_STATUS_SetString("stt", "status", "Transcription complete");
+    ACAP_STATUS_SetString("stt", "last_transcript", text);
+
+    // Publish transcription to MQTT topic: voice/transcript/{SERIAL}
+    char topic[128];
+    snprintf(topic, sizeof(topic), "transcript/%s", device_serial);
+
+    cJSON* payload = cJSON_CreateObject();
+    cJSON_AddStringToObject(payload, "text", text);
+
+    int result = MQTT_Publish_JSON(topic, payload, 0, 0);
+    if (result == 0) {
+        LOG("STT: Published transcription to MQTT topic '%s'\n", topic);
+    } else {
+        LOG_WARN("STT: Failed to publish transcription to MQTT topic '%s'\n", topic);
+    }
+
+    cJSON_Delete(payload);
 }
 
 // Wyoming TTS audio callback - receives WAV data from Piper
@@ -188,6 +236,15 @@ wyoming_audio_callback(WyomingServiceType service, const unsigned char* data, si
         LOG("TTS audio loaded: %u samples (%.2f seconds at %u Hz)\n",
             num_samples, (float)num_samples / header->sample_rate, header->sample_rate);
 
+        // Publish MQTT status
+        cJSON* status = cJSON_CreateObject();
+        cJSON_AddStringToObject(status, "status", "playing");
+        cJSON_AddNumberToObject(status, "samples", num_samples);
+        cJSON_AddNumberToObject(status, "duration", (float)num_samples / header->sample_rate);
+        cJSON_AddNumberToObject(status, "sample_rate", header->sample_rate);
+        MQTT_Publish_JSON("voice/tts/status", status, 0, 0);
+        cJSON_Delete(status);
+
         // Start playback
         g_idle_add(start_playback_idle, NULL);
     } else {
@@ -240,21 +297,57 @@ wav_download_write_callback(void *contents, size_t size, size_t nmemb, void *use
 // AUDIO CALLBACKS
 // =============================================================================
 
-// Input audio callback (future: wake-word detection, VAD)
+// Input audio callback - captures audio for STT when recording is active
 void
 audio_input_callback(struct spa_buffer *buf, guint64 ts, gpointer userdata) {
     (void)ts;
     (void)userdata;
-    (void)buf;
 
-    // TODO: Wake-word detection will go here
-    // For now, just count samples
-    if (va_state.input.active) {
-        for (guint ch = 0; ch < buf->n_datas; ch++) {
-            uint32_t size = buf->datas[ch].chunk->size;
-            uint32_t n_samples = size / sizeof(float);
-            va_state.input.sample_count += n_samples;
+    if (!va_state.recording.recording) {
+        // Not recording, just return
+        return;
+    }
+
+    // Get audio data from PipeWire buffer
+    struct spa_data *data = buf->datas;
+    float *samples = (float *)data->data;
+    guint32 num_samples = data->chunk->size / sizeof(float);
+
+    // Log first capture
+    if (va_state.recording.size == 0) {
+        LOG("STT: Audio capture started (%u samples received)\n", num_samples);
+    }
+
+    // Ensure we have capacity in recording buffer
+    if (va_state.recording.size + num_samples > va_state.recording.capacity) {
+        // Expand buffer capacity
+        guint32 new_capacity = va_state.recording.capacity * 2;
+        if (new_capacity < va_state.recording.size + num_samples) {
+            new_capacity = va_state.recording.size + num_samples + 16000;  // Add 1 second headroom
         }
+
+        float *new_buffer = realloc(va_state.recording.samples, new_capacity * sizeof(float));
+        if (!new_buffer) {
+            LOG_WARN("Failed to expand recording buffer\n");
+            return;
+        }
+
+        va_state.recording.samples = new_buffer;
+        va_state.recording.capacity = new_capacity;
+        LOG_TRACE("Recording buffer expanded to %u samples\n", new_capacity);
+    }
+
+    // Copy samples to recording buffer
+    memcpy(va_state.recording.samples + va_state.recording.size, samples, num_samples * sizeof(float));
+    va_state.recording.size += num_samples;
+
+    // Update input stream sample count
+    va_state.input.sample_count += num_samples;
+
+    // Update status every 16000 samples (~1 second at 16kHz)
+    if (va_state.recording.size % 16000 < num_samples) {
+        ACAP_STATUS_SetNumber("stt", "samples", va_state.recording.size);
+        ACAP_STATUS_SetNumber("stt", "duration", (float)va_state.recording.size / AUDIO_SAMPLE_RATE);
     }
 }
 
@@ -356,6 +449,13 @@ audio_output_callback(struct spa_buffer *buf, guint64 reqsize, gpointer userdata
         va_state.output.active = FALSE;
         va_state.playback.ready = FALSE;
         ACAP_STATUS_SetBool("output", "state", 0);
+
+        // Publish MQTT completion status
+        cJSON* status = cJSON_CreateObject();
+        cJSON_AddStringToObject(status, "status", "completed");
+        cJSON_AddNumberToObject(status, "samples_played", va_state.output.sample_count);
+        MQTT_Publish_JSON("voice/tts/status", status, 0, 0);
+        cJSON_Delete(status);
 
         // IMPORTANT: Don't call pw_audio_stop() from within the audio callback!
         // Schedule cleanup in main thread via idle callback
@@ -599,6 +699,76 @@ HTTP_Endpoint_test_download(const ACAP_HTTP_Response response, const ACAP_HTTP_R
     free(chunk.data);
 }
 
+// Test raw TCP connection endpoint
+void
+HTTP_Endpoint_test_tcp(const ACAP_HTTP_Response response, const ACAP_HTTP_Request request) {
+    const char* method = ACAP_HTTP_Get_Method(request);
+
+    if (!method || strcmp(method, "GET") != 0) {
+        ACAP_HTTP_Respond_Error(response, 400, "Only GET method allowed");
+        return;
+    }
+
+    const char* host = ACAP_HTTP_Request_Param(request, "host");
+    const char* port_str = ACAP_HTTP_Request_Param(request, "port");
+
+    if (!host || !port_str) {
+        ACAP_HTTP_Respond_Error(response, 400, "Missing host or port parameter");
+        return;
+    }
+
+    int port = atoi(port_str);
+
+    LOG("Testing TCP connection to %s:%d\n", host, port);
+
+    // Create blocking socket for simpler testing
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg), "Socket creation failed: %s", strerror(errno));
+        ACAP_HTTP_Respond_Error(response, 500, error_msg);
+        return;
+    }
+
+    // Set timeout for connect
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    struct sockaddr_in server_addr = {0};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, host, &server_addr.sin_addr) <= 0) {
+        close(sockfd);
+        ACAP_HTTP_Respond_Error(response, 400, "Invalid IP address");
+        return;
+    }
+
+    // Try to connect (blocking with timeout)
+    int ret = connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
+
+    char result_msg[512];
+    if (ret == 0) {
+        // Connection successful!
+        snprintf(result_msg, sizeof(result_msg),
+                 "SUCCESS: Connected to %s:%d (socket_fd=%d)", host, port, sockfd);
+        LOG("%s\n", result_msg);
+        close(sockfd);
+        ACAP_HTTP_Respond_Text(response, result_msg);
+    } else {
+        // Connection failed
+        snprintf(result_msg, sizeof(result_msg),
+                 "FAILED: Could not connect to %s:%d - %s (errno=%d)",
+                 host, port, strerror(errno), errno);
+        LOG_WARN("%s\n", result_msg);
+        close(sockfd);
+        ACAP_HTTP_Respond_Error(response, 500, result_msg);
+    }
+}
+
 // Test Wyoming connection endpoint
 void
 HTTP_Endpoint_test_wyoming(const ACAP_HTTP_Response response, const ACAP_HTTP_Request request) {
@@ -738,6 +908,436 @@ HTTP_Endpoint_speak(const ACAP_HTTP_Response response, const ACAP_HTTP_Request r
     ACAP_HTTP_Respond_Text(response, "TTS request accepted, audio will play when ready");
 }
 
+// =============================================================================
+// STT HTTP ENDPOINTS
+// =============================================================================
+
+// Start STT listening endpoint
+void
+HTTP_Endpoint_listen_start(const ACAP_HTTP_Response response, const ACAP_HTTP_Request request) {
+    const char* method = ACAP_HTTP_Get_Method(request);
+
+    if (!method || strcmp(method, "POST") != 0) {
+        ACAP_HTTP_Respond_Error(response, 400, "Only POST method allowed");
+        return;
+    }
+
+    if (va_state.recording.recording) {
+        ACAP_HTTP_Respond_Error(response, 409, "Already recording");
+        return;
+    }
+
+    LOG("STT: HTTP listen_start request\n");
+    start_recording();
+    ACAP_HTTP_Respond_Text(response, "Listening started");
+}
+
+// Stop STT listening endpoint - returns transcription as JSON
+void
+HTTP_Endpoint_listen_stop(const ACAP_HTTP_Response response, const ACAP_HTTP_Request request) {
+    const char* method = ACAP_HTTP_Get_Method(request);
+
+    if (!method || strcmp(method, "POST") != 0) {
+        ACAP_HTTP_Respond_Error(response, 400, "Only POST method allowed");
+        return;
+    }
+
+    if (!va_state.recording.recording) {
+        ACAP_HTTP_Respond_Error(response, 400, "Not recording");
+        return;
+    }
+
+    LOG("STT: HTTP listen_stop request\n");
+    stop_recording();
+
+    // NOTE: For now, we return immediately
+    // TODO: Wait for transcription and return JSON with text
+    // This requires storing the response object and responding in wyoming_transcript_callback
+    ACAP_HTTP_Respond_Text(response, "Listening stopped, check status for transcription");
+}
+
+// Get last transcription endpoint
+void
+HTTP_Endpoint_transcription(const ACAP_HTTP_Response response, const ACAP_HTTP_Request request) {
+    const char* method = ACAP_HTTP_Get_Method(request);
+
+    if (!method || strcmp(method, "GET") != 0) {
+        ACAP_HTTP_Respond_Error(response, 400, "Only GET method allowed");
+        return;
+    }
+
+    // Get last transcript from status
+    const char* last_transcript = ACAP_STATUS_String("stt", "last_transcript");
+
+    cJSON* json = cJSON_CreateObject();
+    cJSON_AddStringToObject(json, "text", last_transcript ? last_transcript : "");
+
+    ACAP_HTTP_Respond_JSON(response, json);
+
+    cJSON_Delete(json);
+}
+
+// =============================================================================
+// STT RECORDING FUNCTIONS
+// =============================================================================
+
+// Delayed start recording callback (gives main loop time to stabilize)
+static gboolean delayed_start_recording_callback(gpointer user_data) {
+    (void)user_data;
+
+    LOG("STT: Delayed start - initializing input stream\n");
+
+    // Start input stream if not already active
+    if (!va_state.input.stream) {
+        LOG("STT: Starting input stream\n");
+        va_state.input.stream = pw_audio_capture_start(
+            SPA_AUDIO_FORMAT_F32,
+            AUDIO_SAMPLE_RATE,
+            PW_AUDIO_MONO,
+            audio_error_callback,
+            NULL
+        );
+
+        if (va_state.input.stream) {
+            pw_audio_set_on_buffer_cb(va_state.input.stream, audio_input_callback, NULL);
+            va_state.input.active = TRUE;
+            LOG("STT: Input stream started successfully\n");
+        } else {
+            LOG_WARN("STT: Failed to start input stream\n");
+            va_state.recording.recording = FALSE;
+        }
+    }
+
+    return G_SOURCE_REMOVE;  // One-shot timer
+}
+
+// Start recording audio for STT
+void start_recording() {
+    LOG("STT: Starting recording\n");
+
+    // Initialize recording buffer if needed
+    if (!va_state.recording.samples) {
+        va_state.recording.capacity = AUDIO_SAMPLE_RATE * 30;  // 30 seconds max
+        va_state.recording.samples = malloc(va_state.recording.capacity * sizeof(float));
+        if (!va_state.recording.samples) {
+            LOG_WARN("STT: Failed to allocate recording buffer\n");
+            ACAP_STATUS_SetString("stt", "status", "Failed to allocate recording buffer");
+            return;
+        }
+    }
+
+    // Reset recording state
+    va_state.recording.size = 0;
+    va_state.recording.sample_rate = AUDIO_SAMPLE_RATE;
+    va_state.recording.recording = TRUE;
+
+    // Update status
+    ACAP_STATUS_SetBool("stt", "recording", 1);
+    ACAP_STATUS_SetNumber("stt", "samples", 0);
+    ACAP_STATUS_SetString("stt", "status", "Recording started");
+
+    // Delay stream start by 100ms to allow main loop to stabilize
+    // This prevents crashes when MQTT retained messages trigger recording during initialization
+    g_timeout_add(100, delayed_start_recording_callback, NULL);
+    LOG("STT: Input stream start scheduled (100ms delay)\n");
+}
+
+// Stop recording and send to Wyoming Whisper for transcription
+void stop_recording() {
+    // Don't stop if we're not recording
+    if (!va_state.recording.recording) {
+        LOG("STT: Ignoring stop request - not recording\n");
+        return;
+    }
+
+    LOG("STT: Stopping recording\n");
+
+    va_state.recording.recording = FALSE;
+    ACAP_STATUS_SetBool("stt", "recording", 0);
+
+    if (va_state.recording.size == 0) {
+        LOG_WARN("STT: No audio recorded (no samples captured)\n");
+        ACAP_STATUS_SetString("stt", "status", "No audio captured");
+        return;
+    }
+
+    LOG("STT: Recorded %u samples (%.2f seconds at %u Hz)\n",
+        va_state.recording.size,
+        (float)va_state.recording.size / va_state.recording.sample_rate,
+        va_state.recording.sample_rate);
+
+    // Convert F32 samples to PCM16 WAV format
+    // Wyoming Whisper expects WAV file with PCM16 data
+
+    // Calculate sizes
+    uint32_t pcm16_size = va_state.recording.size * 2;  // 2 bytes per sample (16-bit)
+    uint32_t wav_size = 44 + pcm16_size;  // WAV header + PCM data
+
+    // Allocate WAV buffer
+    unsigned char *wav_data = malloc(wav_size);
+    if (!wav_data) {
+        LOG_WARN("STT: Failed to allocate WAV buffer\n");
+        return;
+    }
+
+    // Build WAV header
+    typedef struct __attribute__((packed)) {
+        char riff[4];
+        uint32_t file_size;
+        char wave[4];
+        char fmt[4];
+        uint32_t fmt_size;
+        uint16_t audio_format;
+        uint16_t num_channels;
+        uint32_t sample_rate;
+        uint32_t byte_rate;
+        uint16_t block_align;
+        uint16_t bits_per_sample;
+        char data[4];
+        uint32_t data_size;
+    } WavHeader;
+
+    WavHeader *header = (WavHeader *)wav_data;
+    memcpy(header->riff, "RIFF", 4);
+    header->file_size = wav_size - 8;
+    memcpy(header->wave, "WAVE", 4);
+    memcpy(header->fmt, "fmt ", 4);
+    header->fmt_size = 16;
+    header->audio_format = 1;  // PCM
+    header->num_channels = 1;  // Mono
+    header->sample_rate = va_state.recording.sample_rate;
+    header->byte_rate = va_state.recording.sample_rate * 2;  // 16-bit mono
+    header->block_align = 2;
+    header->bits_per_sample = 16;
+    memcpy(header->data, "data", 4);
+    header->data_size = pcm16_size;
+
+    // Convert F32 to PCM16
+    int16_t *pcm16_data = (int16_t *)(wav_data + 44);
+    for (uint32_t i = 0; i < va_state.recording.size; i++) {
+        float sample = va_state.recording.samples[i];
+        // Clamp to [-1.0, 1.0]
+        if (sample > 1.0f) sample = 1.0f;
+        if (sample < -1.0f) sample = -1.0f;
+        // Convert to 16-bit signed integer
+        pcm16_data[i] = (int16_t)(sample * 32767.0f);
+    }
+
+    LOG("STT: Created WAV file (%u bytes), sending to Wyoming Whisper\n", wav_size);
+
+    // Update status with recording info
+    ACAP_STATUS_SetNumber("stt", "samples", va_state.recording.size);
+    ACAP_STATUS_SetNumber("stt", "duration", (float)va_state.recording.size / va_state.recording.sample_rate);
+    ACAP_STATUS_SetString("stt", "status", "Connecting to Whisper");
+
+    // Check if Wyoming Whisper is connected
+    if (!wyoming_is_connected(WYOMING_SERVICE_WHISPER)) {
+        LOG("STT: Whisper not connected, attempting connection...\n");
+        if (wyoming_connect(WYOMING_SERVICE_WHISPER) != 0) {
+            LOG_WARN("STT: Failed to connect to Whisper service\n");
+            ACAP_STATUS_SetString("stt", "status", "Failed to connect to Whisper");
+            free(wav_data);
+            return;
+        }
+
+        // Wait for connection
+        for (int i = 0; i < 30; i++) {
+            if (wyoming_is_connected(WYOMING_SERVICE_WHISPER)) {
+                break;
+            }
+            usleep(100000);  // 100ms
+        }
+
+        if (!wyoming_is_connected(WYOMING_SERVICE_WHISPER)) {
+            LOG_WARN("STT: Whisper service connection timeout (no handshake received)\n");
+            ACAP_STATUS_SetString("stt", "status", "Whisper connection timeout");
+            free(wav_data);
+            return;
+        }
+
+        LOG("STT: Whisper connected and handshake complete\n");
+    }
+
+    // Send to Wyoming Whisper
+    ACAP_STATUS_SetString("stt", "status", "Transcribing");
+    if (wyoming_asr_transcribe(wav_data, wav_size) != 0) {
+        LOG_WARN("STT: Failed to send audio to Whisper\n");
+        ACAP_STATUS_SetString("stt", "status", "Failed to send audio to Whisper");
+    } else {
+        LOG("STT: Audio sent to Whisper, waiting for transcription\n");
+    }
+
+    free(wav_data);
+}
+
+// =============================================================================
+// MQTT INTEGRATION
+// =============================================================================
+
+void
+MQTT_Connection_Status(int state) {
+    char topic[64];
+    cJSON* message = NULL;
+
+    switch (state) {
+        case MQTT_INITIALIZING:
+            LOG("MQTT: Initializing\n");
+            break;
+        case MQTT_CONNECTING:
+            LOG("MQTT: Connecting\n");
+            break;
+        case MQTT_CONNECTED:
+            LOG("MQTT: Connected\n");
+
+            // Subscribe to voice topics with device serial
+            char mqtt_sub_topic[128];
+
+            // Subscribe to TTS speak topic
+            snprintf(mqtt_sub_topic, sizeof(mqtt_sub_topic), "voice/speak/%s", device_serial);
+            MQTT_Subscribe(mqtt_sub_topic);
+            LOG("MQTT: Subscribed to topic: %s\n", mqtt_sub_topic);
+
+            // Subscribe to playback topic
+            snprintf(mqtt_sub_topic, sizeof(mqtt_sub_topic), "voice/playback/%s", device_serial);
+            MQTT_Subscribe(mqtt_sub_topic);
+            LOG("MQTT: Subscribed to topic: %s\n", mqtt_sub_topic);
+
+            // Subscribe to STT listen start topic
+            snprintf(mqtt_sub_topic, sizeof(mqtt_sub_topic), "voice/listen/start/%s", device_serial);
+            MQTT_Subscribe(mqtt_sub_topic);
+            LOG("MQTT: Subscribed to topic: %s\n", mqtt_sub_topic);
+
+            // Subscribe to STT listen stop topic
+            snprintf(mqtt_sub_topic, sizeof(mqtt_sub_topic), "voice/listen/stop/%s", device_serial);
+            MQTT_Subscribe(mqtt_sub_topic);
+            LOG("MQTT: Subscribed to topic: %s\n", mqtt_sub_topic);
+
+            // Publish connection status to voice/connect/{SERIAL}
+            snprintf(topic, sizeof(topic), "connect/%s", device_serial);
+            message = cJSON_CreateObject();
+            cJSON_AddTrueToObject(message, "connected");
+            cJSON_AddStringToObject(message, "address", ACAP_DEVICE_Prop("IPv4"));
+            cJSON_AddStringToObject(message, "service", "voice");
+            MQTT_Publish_JSON(topic, message, 0, 1);
+            cJSON_Delete(message);
+            break;
+        case MQTT_DISCONNECTING:
+            LOG("MQTT: Disconnecting\n");
+            snprintf(topic, sizeof(topic), "voice/connect/%s", device_serial);
+            message = cJSON_CreateObject();
+            cJSON_AddFalseToObject(message, "connected");
+            cJSON_AddStringToObject(message, "address", ACAP_DEVICE_Prop("IPv4"));
+            cJSON_AddStringToObject(message, "service", "voice");
+            MQTT_Publish_JSON(topic, message, 0, 1);
+            cJSON_Delete(message);
+            break;
+        case MQTT_RECONNECTED:
+            LOG("MQTT: Reconnected\n");
+
+            // Re-subscribe to all voice topics after reconnection
+            char mqtt_resub_topic[128];
+
+            snprintf(mqtt_resub_topic, sizeof(mqtt_resub_topic), "voice/speak/%s", device_serial);
+            MQTT_Subscribe(mqtt_resub_topic);
+            LOG("MQTT: Re-subscribed to topic: %s\n", mqtt_resub_topic);
+
+            snprintf(mqtt_resub_topic, sizeof(mqtt_resub_topic), "voice/playback/%s", device_serial);
+            MQTT_Subscribe(mqtt_resub_topic);
+            LOG("MQTT: Re-subscribed to topic: %s\n", mqtt_resub_topic);
+
+            snprintf(mqtt_resub_topic, sizeof(mqtt_resub_topic), "voice/listen/start/%s", device_serial);
+            MQTT_Subscribe(mqtt_resub_topic);
+            LOG("MQTT: Re-subscribed to topic: %s\n", mqtt_resub_topic);
+
+            snprintf(mqtt_resub_topic, sizeof(mqtt_resub_topic), "voice/listen/stop/%s", device_serial);
+            MQTT_Subscribe(mqtt_resub_topic);
+            LOG("MQTT: Re-subscribed to topic: %s\n", mqtt_resub_topic);
+            break;
+        case MQTT_DISCONNECTED:
+            LOG("MQTT: Disconnected\n");
+            break;
+    }
+}
+
+void
+MQTT_Message_Handler(const char *topic, const char *payload) {
+    LOG("MQTT Message: %s = %s\n", topic, payload);
+
+    // Build expected topics with device serial
+    char listen_start_topic[128], listen_stop_topic[128];
+    char speak_topic[128], playback_topic[128];
+
+    snprintf(listen_start_topic, sizeof(listen_start_topic), "voice/listen/start/%s", device_serial);
+    snprintf(listen_stop_topic, sizeof(listen_stop_topic), "voice/listen/stop/%s", device_serial);
+    snprintf(speak_topic, sizeof(speak_topic), "voice/speak/%s", device_serial);
+    snprintf(playback_topic, sizeof(playback_topic), "voice/playback/%s", device_serial);
+
+    // Check if this is the listen start topic
+    if (strcmp(topic, listen_start_topic) == 0) {
+        LOG("MQTT: Listen start message received - starting STT recording\n");
+        start_recording();
+        return;
+    }
+
+    // Check if this is the listen stop topic
+    if (strcmp(topic, listen_stop_topic) == 0) {
+        LOG("MQTT: Listen stop message received - stopping STT recording\n");
+        stop_recording();
+        return;
+    }
+
+    // Check if this is the playback topic
+    if (strcmp(topic, playback_topic) == 0) {
+        cJSON* json = cJSON_Parse(payload);
+        if (json) {
+            cJSON* url_field = cJSON_GetObjectItem(json, "url");
+            if (url_field && cJSON_IsString(url_field)) {
+                LOG("MQTT: Playback request - %s\n", url_field->valuestring);
+                // TODO: Trigger playback (implement if needed)
+            }
+            cJSON_Delete(json);
+        }
+        return;
+    }
+
+    // Check if this is the speak topic (TTS)
+    if (strcmp(topic, speak_topic) == 0) {
+        cJSON* json = cJSON_Parse(payload);
+        if (!json) {
+            LOG_WARN("MQTT: Invalid JSON payload for speak command\n");
+            return;
+        }
+
+        cJSON* text = cJSON_GetObjectItem(json, "text");
+        if (text && cJSON_IsString(text)) {
+            LOG("MQTT: TTS request - %s\n", text->valuestring);
+
+            // Get voice parameter (optional)
+            const char* voice = NULL;
+            cJSON* voice_item = cJSON_GetObjectItem(json, "voice");
+            if (voice_item && cJSON_IsString(voice_item)) {
+                voice = voice_item->valuestring;
+            }
+
+            // Send to Wyoming TTS
+            if (wyoming_tts_synthesize(text->valuestring, voice) == 0) {
+                LOG("MQTT: TTS synthesis started\n");
+            } else {
+                LOG_WARN("MQTT: TTS synthesis failed\n");
+            }
+        }
+
+        cJSON_Delete(json);
+        return;
+    }
+
+    LOG_WARN("MQTT: Unhandled topic: %s\n", topic);
+}
+
+// =============================================================================
+// HTTP ENDPOINTS
+// =============================================================================
+
 void
 HTTP_Endpoint_playback(const ACAP_HTTP_Response response, const ACAP_HTTP_Request request) {
     const char* method = ACAP_HTTP_Get_Method(request);
@@ -748,17 +1348,33 @@ HTTP_Endpoint_playback(const ACAP_HTTP_Response response, const ACAP_HTTP_Reques
         return;
     }
 
-    // Get request body (URL)
+    // Get request body (JSON)
     if (!request->postData || request->postDataLength == 0) {
-        ACAP_HTTP_Respond_Error(response, 400, "Missing URL in request body");
+        ACAP_HTTP_Respond_Error(response, 400, "Missing JSON body in request");
         return;
     }
 
-    const char* body = request->postData;
+    // Parse JSON body
+    cJSON* json = cJSON_Parse(request->postData);
+    if (!json) {
+        ACAP_HTTP_Respond_Error(response, 400, "Invalid JSON in request body");
+        return;
+    }
+
+    // Get URL from JSON
+    cJSON* url_field = cJSON_GetObjectItem(json, "url");
+    if (!url_field || !cJSON_IsString(url_field)) {
+        cJSON_Delete(json);
+        ACAP_HTTP_Respond_Error(response, 400, "Missing 'url' field in JSON");
+        return;
+    }
+
+    const char* url = url_field->valuestring;
 
     // Check if already playing
     if (va_state.output.active) {
         LOG_WARN("Already playing (active=%d, stream=%p)\n", va_state.output.active, (void*)va_state.output.stream);
+        cJSON_Delete(json);
         ACAP_HTTP_Respond_Error(response, 409, "Already playing");
         return;
     }
@@ -766,16 +1382,18 @@ HTTP_Endpoint_playback(const ACAP_HTTP_Response response, const ACAP_HTTP_Reques
     // Check if downloading
     if (va_state.downloading) {
         LOG_WARN("Already downloading\n");
+        cJSON_Delete(json);
         ACAP_HTTP_Respond_Error(response, 409, "Already downloading");
         return;
     }
 
-    LOG("Playback request: URL=%s\n", body);
+    LOG("Playback request: URL=%s\n", url);
 
     // Store URL and mark as downloading
     g_free(va_state.download_url);
-    va_state.download_url = g_strdup(body);
+    va_state.download_url = g_strdup(url);
     va_state.downloading = TRUE;
+    cJSON_Delete(json);
 
     // Download and load WAV file
     if (!download_and_load_wav(va_state.download_url)) {
@@ -845,11 +1463,27 @@ int main(void) {
 
     ACAP(APP_PACKAGE, Settings_Updated_Callback);
 
+    // Get device serial number for MQTT topics
+    const char* serial = ACAP_DEVICE_Prop("serial");
+    if (serial) {
+        strncpy(device_serial, serial, sizeof(device_serial) - 1);
+        device_serial[sizeof(device_serial) - 1] = '\0';
+        LOG("Device serial: %s\n", device_serial);
+    } else {
+        LOG_WARN("Failed to get device serial number\n");
+        strcpy(device_serial, "UNKNOWN");
+    }
+
     // Register HTTP endpoints
     ACAP_HTTP_Node("playback", HTTP_Endpoint_playback);
     ACAP_HTTP_Node("speak", HTTP_Endpoint_speak);
-    ACAP_HTTP_Node("test_download", HTTP_Endpoint_test_download);
-    ACAP_HTTP_Node("test_wyoming", HTTP_Endpoint_test_wyoming);
+    ACAP_HTTP_Node("listen_start", HTTP_Endpoint_listen_start);
+    ACAP_HTTP_Node("listen_stop", HTTP_Endpoint_listen_stop);
+    ACAP_HTTP_Node("transcription", HTTP_Endpoint_transcription);
+
+    // Initialize MQTT
+    // Note: Topic subscriptions happen in MQTT_Connection_Status callback when connected
+    MQTT_Init(MQTT_Connection_Status, MQTT_Message_Handler);
 
     // Initialize status groups
     ACAP_STATUS_SetBool("input", "state", 0);
@@ -864,6 +1498,13 @@ int main(void) {
     ACAP_STATUS_SetString("wyoming", "piper", "not configured");
     ACAP_STATUS_SetString("wyoming", "whisper", "not configured");
 
+    // Initialize STT status group
+    ACAP_STATUS_SetBool("stt", "recording", 0);
+    ACAP_STATUS_SetNumber("stt", "samples", 0);
+    ACAP_STATUS_SetNumber("stt", "duration", 0);
+    ACAP_STATUS_SetString("stt", "status", "Ready");
+    ACAP_STATUS_SetString("stt", "last_transcript", "");
+
     LOG("Entering main loop\n");
 	main_loop = g_main_loop_new(NULL, FALSE);
 
@@ -874,6 +1515,7 @@ int main(void) {
     if (wyoming_init(main_loop) == 0) {
         wyoming_set_state_callback(wyoming_state_callback);
         wyoming_set_audio_callback(wyoming_audio_callback);
+        wyoming_set_transcript_callback(wyoming_transcript_callback);
 
         // Configure from settings
         cJSON* settings = ACAP_Get_Config("settings");
@@ -912,6 +1554,10 @@ int main(void) {
 
     g_main_loop_run(main_loop);
 	LOG("Terminating and cleaning up %s\n", APP_PACKAGE);
+
+    // Disconnect MQTT
+    MQTT_Connection_Status(MQTT_DISCONNECTING);
+    MQTT_Cleanup();
 
     // Cleanup Wyoming client
     wyoming_cleanup();

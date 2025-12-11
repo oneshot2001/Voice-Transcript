@@ -29,9 +29,15 @@ This ACAP (Axis Camera Application Platform) application transforms Axis network
 ✅ **HTTP API**
 - `/local/voice/speak` - Text-to-speech synthesis
 - `/local/voice/playback` - Play WAV from URL
+- `/local/voice/listen_start` - Start STT listening
+- `/local/voice/listen_stop` - Stop STT listening and get transcription
+- `/local/voice/transcription` - Get last transcription
 - `/local/voice/status` - Stream status monitoring
 - `/local/voice/settings` - Wyoming server configuration
-- `/local/voice/test_download` - Network diagnostics
+
+✅ **MQTT Topics** (auto-configured with device serial)
+- Subscribe: `voice/speak/{SERIAL}`, `voice/playback/{SERIAL}`, `voice/listen/start/{SERIAL}`, `voice/listen/stop/{SERIAL}`
+- Publish: `voice/connect/{SERIAL}`, `voice/transcript/{SERIAL}`
 
 ✅ **Architecture**
 - Independent input/output audio streams
@@ -87,8 +93,37 @@ curl -X POST -H 'Content-Type: application/json' \
 ### Play WAV from URL
 
 ```bash
-curl -X POST http://speaker.internal/local/voice/playback \
-  -d "http://10.13.8.183:5001/test.wav"
+curl -X POST -H 'Content-Type: application/json' \
+  --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/playback \
+  -d '{"url":"http://10.13.8.183:5001/test.wav"}'
+```
+
+### Speech-to-Text (STT)
+
+Start listening:
+```bash
+curl -X POST --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/listen_start
+```
+
+Stop listening and get transcription:
+```bash
+curl -X POST --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/listen_stop
+```
+
+Get last transcription:
+```bash
+curl --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/transcription
+```
+
+Response:
+```json
+{
+  "text": " Detta är en transkription"
+}
 ```
 
 ### Configuration
@@ -191,50 +226,106 @@ FastCGI Thread:
 
 ### Wyoming Server Setup
 
-This application requires a Wyoming protocol server running on your network:
+This application requires Wyoming protocol servers running on your network. You can run them directly with Python or use Docker containers.
 
-**Piper TTS Server:**
+#### Installation
+
+**Install Wyoming Piper (TTS):**
 ```bash
-docker run -d -p 10200:10200 \
-  -v /path/to/piper:/data \
-  rhasspy/wyoming-piper \
+pip install wyoming-piper
+```
+
+**Install Wyoming Faster-Whisper (STT):**
+```bash
+pip install wyoming-faster-whisper
+```
+
+#### Running Piper TTS Server
+
+**Swedish Voice:**
+```bash
+python -m wyoming_piper \
+  --uri tcp://0.0.0.0:10200 \
+  --data-dir ~/assistant/wyoming/piper \
   --voice sv_SE-nst-medium
 ```
 
-**Whisper ASR Server (Future):**
+**English Voice:**
 ```bash
-docker run -d -p 10300:10300 \
-  rhasspy/wyoming-whisper \
-  --model base \
-  --language sv
+python -m wyoming_piper \
+  --uri tcp://0.0.0.0:10200 \
+  --data-dir ~/assistant/wyoming/piper \
+  --voice en_US-lessac-medium
 ```
+
+Available voices: https://github.com/rhasspy/piper/blob/master/VOICES.md
+
+#### Running Faster-Whisper STT Server
+
+**Swedish (with CUDA acceleration):**
+```bash
+python -m wyoming_faster_whisper \
+  --uri tcp://0.0.0.0:10300 \
+  --data-dir ~/assistant/wyoming/whisper \
+  --model large-v3 \
+  --language sv \
+  --device cuda \
+  --compute-type float16 \
+  --beam-size 1
+```
+
+**English (with CUDA acceleration):**
+```bash
+python -m wyoming_faster_whisper \
+  --uri tcp://0.0.0.0:10300 \
+  --data-dir ~/assistant/wyoming/whisper \
+  --model large-v3 \
+  --language en \
+  --device cuda \
+  --compute-type float16 \
+  --beam-size 1
+```
+
+**CPU-only (no CUDA):**
+```bash
+python -m wyoming_faster_whisper \
+  --uri tcp://0.0.0.0:10300 \
+  --data-dir ~/assistant/wyoming/whisper \
+  --model base \
+  --language sv \
+  --device cpu
+```
+
+**Parameters:**
+- `--model`: `tiny`, `base`, `small`, `medium`, `large-v3` (larger = more accurate, slower)
+- `--device`: `cuda` (GPU) or `cpu`
+- `--compute-type`: `float16` (faster), `int8` (fastest), `float32` (most accurate)
+- `--beam-size`: Lower = faster, Higher = more accurate (1-5 recommended)
 
 ## 🛣️ Roadmap
 
-### ✅ Steps 1-4: COMPLETED (v0.5.0)
+### ✅ Steps 1-7: COMPLETED (v0.9.0)
 - ✅ WAV playback from URL
 - ✅ Wyoming protocol TCP client
 - ✅ TTS synthesis (Piper)
-- ✅ Swedish language support
+- ✅ STT transcription (Faster-Whisper)
+- ✅ Push-to-talk interface
+- ✅ MQTT integration with device serial
+- ✅ Swedish & English language support
 
 ### 🔜 Future Development
 
-**Step 5: Continuous Input Stream**
+**Step 8: Continuous Input Stream**
 - Start input stream on initialization
 - Process audio in real-time
 - Integrate wake-word detection library (Porcupine, Snowboy)
 
-**Step 6: VAD-Triggered Recording**
-- Detect wake-word and start recording
+**Step 9: VAD-Triggered Recording**
+- Detect wake-word and start recording automatically
 - Voice Activity Detection (VAD)
 - End recording on silence detection
 
-**Step 7: Speech Recognition**
-- Send recorded audio to Wyoming-whisper server
-- Receive transcription/intent
-- Process user commands
-
-**Step 8: Full Voice Assistant Loop**
+**Step 10: Full Voice Assistant Loop**
 ```
 Continuous Input (wake-word detection)
     ↓
@@ -242,9 +333,9 @@ Wake-word detected!
     ↓
 Record speech (VAD)
     ↓
-Send to Wyoming-whisper
+Send to Wyoming-whisper ← WORKING!
     ↓
-Receive transcription
+Receive transcription ← WORKING!
     ↓
 Process intent
     ↓
@@ -320,32 +411,36 @@ Resume wake-word listening
 
 ## 📝 Version History
 
+### 0.9.0 - December 11, 2025
+- Wyoming Protocol STT Integration
+  - Push-to-talk interface in web UI
+  - Direct TCP connection to Wyoming Faster-Whisper server
+  - Real-time audio recording from microphone
+  - Transcription via `/listen_start`, `/listen_stop`, `/transcription` endpoints
+- MQTT Topics with Device Serial
+  - Auto-configured topics: `voice/{action}/{SERIAL}`
+  - Subscribe: `voice/speak/{SERIAL}`, `voice/playback/{SERIAL}`, `voice/listen/start/{SERIAL}`, `voice/listen/stop/{SERIAL}`
+  - Publish: `voice/connect/{SERIAL}`, `voice/transcript/{SERIAL}`
+- HTTP API Improvements
+  - `/playback` now accepts JSON: `{"url":"..."}`
+  - New `/transcription` endpoint for retrieving last STT result
+  - Renamed endpoints: `record_start` → `listen_start`, `record_stop` → `listen_stop`
+  - Removed test endpoints
+- UI Enhancements
+  - Added API documentation in About page
+  - MQTT topics documentation
+  - Buy Me a Coffee support link
+- Bug Fixes
+  - Fixed STT buffer management after transcription
+  - Fixed HTTP response type in transcription endpoint
+
 ### 0.5.0 - December 10, 2025
 - Wyoming Protocol TTS Integration
   - Direct TCP connection to Wyoming Piper server
   - Complex JSON + binary protocol parsing
   - Non-blocking socket I/O with poll()
-  - Brace-counting JSON parser for complex protocol
-  - State machine for JSON ↔ binary mode switching
   - Real-time WAV construction from PCM chunks
-- HTTP Endpoints
-  - `/local/voice/speak` - TTS synthesis
-  - `/local/voice/settings` - Configuration management
-  - `/local/voice/test_wyoming` - Wyoming server testing
-- Audio System
-  - WAV playback from URL
-  - PCM16 to F32 conversion
-  - PipeWire integration
-  - Status reporting
-- Architecture
-  - Independent input/output streams
-  - Thread-safe main loop integration
-  - Swedish language support
-- Bug Fixes
-  - Fixed playback buffer write_pos assignment
-  - Fixed WAV parsing PCM data offset
-  - Fixed non-blocking socket timing with poll()
-  - Fixed WAV header bits_per_sample calculation
+- Initial HTTP endpoints and audio playback system
 
 ### Initial Release
 - Basic ACAP project structure
@@ -384,5 +479,5 @@ SOFTWARE.
 
 ---
 
-**Status:** Steps 1-4 Complete - Wyoming TTS Fully Working! 🎉
-**Next Step:** Continuous input stream for wake-word detection (Step 5)
+**Status:** Steps 1-7 Complete - Wyoming TTS & STT Fully Working! 🎉
+**Next Step:** Continuous input stream for wake-word detection (Step 8)

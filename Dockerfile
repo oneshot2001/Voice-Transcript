@@ -16,4 +16,5 @@ ARG CHIP=
 
 RUN . /opt/axis/acapsdk/environment-setup* && acap-build . \
 	-a 'settings/settings.json' \
-	-a 'settings/events.json'
+	-a 'settings/events.json' \
+	-a 'settings/mqtt.json'

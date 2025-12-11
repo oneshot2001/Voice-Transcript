@@ -3,10 +3,10 @@
 ## Overview
 This ACAP application is designed to be a voice assistant running on an Axis network speaker device. The architecture supports concurrent audio input and output streams, enabling future wake-word detection and real-time TTS playback.
 
-## Current Implementation (Step 1-4)
+## Current Implementation (Step 1-7)
 
 ### ✅ Completed Features
-1. **Wyoming Protocol TTS Integration** 🎙️ **NEW!**
+1. **Wyoming Protocol TTS Integration**
    - HTTP POST endpoint: `/local/voice/speak`
    - Direct TCP connection to Wyoming Piper server
    - Complex JSON + binary protocol parsing
@@ -14,23 +14,38 @@ This ACAP application is designed to be a voice assistant running on an Axis net
    - Automatic playback of Swedish TTS audio
    - Configuration via `/local/voice/settings`
 
-2. **WAV File Playback from URL**
+2. **Wyoming Protocol STT Integration** 🆕
+   - HTTP POST endpoints: `/local/voice/listen_start`, `/local/voice/listen_stop`
+   - HTTP GET endpoint: `/local/voice/transcription`
+   - Direct TCP connection to Wyoming Faster-Whisper server
+   - Real-time audio recording from microphone
+   - Push-to-talk interface in web UI
+   - Transcript published via MQTT
+
+3. **MQTT Integration** 🆕
+   - Auto-configured topics with device serial: `voice/{action}/{SERIAL}`
+   - Subscribe: `voice/speak/{SERIAL}`, `voice/playback/{SERIAL}`, `voice/listen/start/{SERIAL}`, `voice/listen/stop/{SERIAL}`
+   - Publish: `voice/connect/{SERIAL}`, `voice/transcript/{SERIAL}`
+
+4. **WAV File Playback from URL**
    - HTTP POST endpoint: `/local/voice/playback`
+   - Accepts JSON payload: `{"url":"..."}`
    - Downloads WAV file from provided URL
    - Converts PCM16 to F32 for PipeWire
    - Plays audio through speaker
 
-3. **Status Reporting**
-   - `input.*` - Input stream status (not yet used)
+5. **Status Reporting**
+   - `input.*` - Input stream status (recording state)
    - `output.state` - Boolean (0=idle, 1=playing)
    - `output.samples` - Number of samples played
    - `output.size` - Total samples in buffer
    - `output.status` - Human-readable status
    - `output.error` - Error messages
+   - `stt.last_transcript` - Last STT transcription
 
-4. **Independent Audio Streams**
+6. **Independent Audio Streams**
    - Input and output streams are completely independent
-   - Can run simultaneously (foundation for wake-word + playback)
+   - Can run simultaneously (recording + playback)
 
 ### Audio Format Support
 **Currently Supported:**
@@ -45,7 +60,7 @@ This ACAP application is designed to be a voice assistant running on an Axis net
 
 ## HTTP API
 
-### POST /local/voice/speak 🆕
+### POST /local/voice/speak
 Synthesizes text to speech using Wyoming Piper protocol and plays the audio.
 
 **Request:**
@@ -62,19 +77,20 @@ curl -X POST -H 'Content-Type: application/json' \
 - `500 Internal Server Error` - Wyoming connection error
 
 **Features:**
-- Direct TCP connection to Wyoming Piper server (no HTTP intermediary)
+- Direct TCP connection to Wyoming Piper server
 - Streaming binary PCM data reception
 - Automatic WAV construction with correct headers
 - Immediate playback after synthesis completes
-- Swedish language support (configurable)
 
 ### POST /local/voice/playback
 Downloads and plays a WAV file from the specified URL.
 
 **Request:**
 ```bash
-curl -X POST http://<camera-ip>/local/base/playback \
-  -d "http://10.13.8.183:5001/tts_20251208_230555_671706.wav"
+curl -X POST -H 'Content-Type: application/json' \
+  --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/playback \
+  -d '{"url":"http://10.13.8.183:5001/test.wav"}'
 ```
 
 **Response:**
@@ -83,19 +99,51 @@ curl -X POST http://<camera-ip>/local/base/playback \
 - `409 Conflict` - Already playing or downloading
 - `500 Internal Server Error` - Download or playback failed
 
-### GET /local/base/test_download
-Diagnostic endpoint to test network connectivity from the camera.
+### POST /local/voice/listen_start 🆕
+Starts recording audio from the microphone for speech-to-text.
 
 **Request:**
 ```bash
-curl http://<camera-ip>/local/base/test_download
+curl -X POST --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/listen_start
 ```
 
 **Response:**
-- `200 OK` - "SUCCESS: Downloaded N bytes from http://httpbin.org/get (HTTP 200)"
-- `500 Internal Server Error` - Network error with curl error code and description
+- `200 OK` - "Listening started"
+- `409 Conflict` - Already recording
+- `500 Internal Server Error` - Failed to start recording
 
-**Purpose:** Tests if camera can access external URLs. Useful for diagnosing network connectivity issues.
+### POST /local/voice/listen_stop 🆕
+Stops recording and sends audio to Wyoming Faster-Whisper for transcription.
+
+**Request:**
+```bash
+curl -X POST --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/listen_stop
+```
+
+**Response:**
+- `200 OK` - "Recording stopped, transcription in progress"
+- `400 Bad Request` - Not currently recording
+- `500 Internal Server Error` - Failed to stop or transcribe
+
+**Note:** Transcription is sent via MQTT topic `voice/transcript/{SERIAL}` when complete.
+
+### GET /local/voice/transcription 🆕
+Retrieves the last speech-to-text transcription.
+
+**Request:**
+```bash
+curl --digest -u nodered:rednode \
+  http://speaker.internal/local/voice/transcription
+```
+
+**Response:**
+```json
+{
+  "text": " Detta är en transkription"
+}
+```
 
 ### GET /local/voice/settings
 Returns or updates Wyoming server configuration.
@@ -129,7 +177,7 @@ Returns current status of input and output audio streams.
 
 **Request:**
 ```bash
-curl http://<camera-ip>/local/base/status
+curl http://speaker.internal/local/voice/status
 ```
 
 **Response example:**
@@ -148,6 +196,38 @@ curl http://<camera-ip>/local/base/status
   }
 }
 ```
+
+## MQTT Topics 🆕
+
+All MQTT topics are auto-configured with the device serial number: `voice/{action}/{SERIAL}`
+
+### Subscribe Topics (Commands to Device)
+
+**voice/speak/{SERIAL}**
+- Trigger TTS synthesis and playback
+- Payload: `{"text":"Hello, world"}`
+
+**voice/playback/{SERIAL}**
+- Play WAV file from URL
+- Payload: `{"url":"http://server/audio.wav"}`
+
+**voice/listen/start/{SERIAL}**
+- Start STT recording
+- Payload: `{}`
+
+**voice/listen/stop/{SERIAL}**
+- Stop STT recording and transcribe
+- Payload: `{}`
+
+### Publish Topics (Events from Device)
+
+**voice/connect/{SERIAL}**
+- Published on MQTT connection/startup
+- Payload: Device information (model, firmware, etc.)
+
+**voice/transcript/{SERIAL}**
+- Published when STT transcription completes
+- Payload: `{"text":"Transcribed text here"}`
 
 ## State Management
 
@@ -255,30 +335,28 @@ Server → Client: {"type":"audio-stop",...}
 
 ## Future Roadmap
 
-### ✅ Step 1-4: COMPLETED
+### ✅ Steps 1-7: COMPLETED
 - ✅ WAV playback from URL
 - ✅ Wyoming protocol TCP client
 - ✅ TTS synthesis (Piper)
-- ✅ Swedish language support
+- ✅ STT transcription (Faster-Whisper)
+- ✅ Push-to-talk interface
+- ✅ MQTT integration with device serial
+- ✅ Swedish & English language support
 
-### Step 5: Continuous Input (Wake-Word Detection)
+### Step 8: Continuous Input (Wake-Word Detection)
 - Start input stream on initialization
 - Process audio in `audio_input_callback()`
 - Integrate wake-word detection library (Porcupine, Snowboy, etc.)
 - Detect wake-word and trigger recording
 
-### Step 6: VAD-Triggered Recording
-- On wake-word detection, start second capture stream
+### Step 9: VAD-Triggered Recording
+- On wake-word detection, start automatic recording
 - Buffer audio for speech recognition
 - Run VAD (Voice Activity Detection)
 - End recording on silence detection
 
-### Step 7: Speech Recognition (Wyoming Whisper)
-- Send recorded audio to Wyoming-whisper server
-- Receive transcription/intent
-- Process user commands
-
-### Step 8: Full Voice Assistant
+### Step 10: Full Voice Assistant
 ```
 Continuous Input (wake-word)
     ↓
@@ -288,17 +366,15 @@ Start Recording (VAD)
     ↓
 Speech ends (VAD)
     ↓
-Send to Wyoming-whisper
+Send to Wyoming-whisper ← WORKING!
     ↓
-Receive transcription
+Receive transcription ← WORKING!
     ↓
 Process intent
     ↓
-Generate TTS (Wyoming-piper)
+Generate TTS (Wyoming-piper) ← WORKING!
     ↓
-Download WAV
-    ↓
-Playback response (CURRENT STEP)
+Playback response ← WORKING!
     ↓
 Resume wake-word listening
 ```
@@ -447,6 +523,6 @@ Playback completed (32000 samples)
 
 ---
 
-**Last Updated:** 2025-12-10
-**Status:** Step 1-4 Complete - Wyoming TTS Fully Working! 🎉
-**Next Step:** Continuous input stream for wake-word detection
+**Last Updated:** 2025-12-11
+**Status:** Steps 1-7 Complete - Wyoming TTS & STT Fully Working! 🎉
+**Next Step:** Continuous input stream for wake-word detection (Step 8)

@@ -1,371 +1,156 @@
-# Voice Assistant ACAP - Work in Progress
+# Work in Progress - Voice Assistant ACAP
 
-## Project Overview
-Building a voice assistant application on Axis network speaker (Freescale i.MX6 Ultralite ARM platform) using PipeWire for audio I/O.
-
-**Reference Implementation:** `/home/fred/ACAP/ssw-audio` - Working SSW Audio library
-**Current Project:** `/home/fred/ACAP/test_piper` - Voice Assistant ACAP
-
----
-
-## Current Status: üéâ STEPS 1-4 COMPLETE - WYOMING TTS FULLY WORKING!
-
-### Architecture Redesign Complete ‚úÖ
-- **Previous:** Simple record/playback test application
-- **Now:** Full voice assistant architecture with concurrent streams
-- Separated input (future: wake-word) and output (playback) streams
-- Independent state management for each stream
-- No mutual exclusion between record/playback
-
-### Step 1: WAV Playback Implementation ‚úÖ
-**Goal:** HTTP POST endpoint that downloads and plays WAV files from URL
-
-**Completed Features:**
-- ‚úÖ HTTP POST `/local/voice/playback` endpoint
-- ‚úÖ WAV file download via libcurl
-- ‚úÖ WAV header parsing and validation
-- ‚úÖ PCM16 to F32 sample conversion
-- ‚úÖ Playback buffer management
-- ‚úÖ PipeWire output stream integration
-- ‚úÖ Status reporting (input.*, output.*)
-- ‚úÖ Diagnostic endpoint for network testing
-- ‚úÖ Network connectivity verified and working
-
-**WAV Format Supported:**
-- Sample Rate: 16000 Hz (or any rate, PipeWire will resample)
-- Format: PCM 16-bit
-- Channels: Mono (1 channel)
-- Container: WAV (RIFF)
-
-### Steps 2-4: Wyoming Protocol TTS ‚úÖ **NEW!**
-**Goal:** Direct text-to-speech using Wyoming Piper protocol
-
-**Completed Features:**
-- ‚úÖ Wyoming protocol TCP client ([wyoming.c](app/wyoming.c), [wyoming.h](app/wyoming.h))
-- ‚úÖ HTTP POST `/local/voice/speak` endpoint
-- ‚úÖ Direct TCP connection to Wyoming Piper server (10.13.8.2:10200)
-- ‚úÖ Complex JSON + binary protocol parsing
-- ‚úÖ Non-blocking socket with poll() for write-readiness
-- ‚úÖ Brace-counting JSON parser (handles `}{` without whitespace)
-- ‚úÖ State machine for JSON ‚Üî binary mode switching
-- ‚úÖ Real-time WAV file construction from PCM chunks
-- ‚úÖ Automatic playback of Swedish TTS audio
-- ‚úÖ Configuration via `/local/voice/settings`
-
-**Technical Challenges Solved:**
-1. Non-blocking socket timing ‚Üí Added poll() with 3s timeout
-2. Multi-object JSON lines ‚Üí Brace-counting parser
-3. Binary mode switching ‚Üí State machine with break on mode change
-4. WAV header bits/bytes ‚Üí audio_width (bytes) √ó 8 = bits_per_sample
-5. Playback buffer ‚Üí Set both `size` and `write_pos` for completion check
-
-**Testing Results:**
-- Test 1: 63744 samples (2.89 seconds) ‚úì
-- Test 2: 36864 samples (1.67 seconds) ‚úì
-- Test 3: 56064 samples (2.54 seconds) ‚úì
+## Current Status
+-  Wyoming Protocol TTS (Piper) - Fungerar perfekt
+-  WAV playback frÂn URL - Fungerar
+- † Wyoming Protocol STT (Whisper) - **KRITISK BUG vid upprepade anrop**
+- = MQTT Integration - Delvis fungerande
 
 ---
 
-## Code Changes Summary
+## = KRITISK BUG: STT Fungerar Endast En GÂng
 
-### Wyoming Protocol Implementation
-- **NEW FILES:**
-  - [app/wyoming.c](app/wyoming.c) - Complete Wyoming protocol TCP client (~616 lines)
-  - [app/wyoming.h](app/wyoming.h) - Public API for Wyoming client (~128 lines)
+### Symptom
+- **Fˆrsta STT-anropet:** Fungerar perfekt, transkription tas emot
+- **Andra STT-anropet:** Inga data tas emot frÂn Whisper-servern, inget svar
+- **Alla efterfˆljande anrop:** Samma problem som andra anropet
 
-### Key Code Sections
+### Logganalys
 
-#### 1. Brace-Counting JSON Parser ([wyoming.c:365-406](app/wyoming.c#L365-L406))
-Handles Wyoming's unique format where multiple JSON objects appear on same line without whitespace.
+#### Fˆrsta anropet (FUNGERAR):
+```
+Wyoming ASR: All events sent, waiting for transcript
+Wyoming ASR: Received 99 bytes from socket          ê TAR EMOT DATA
+Wyoming: Processing merged JSON (len=91)
+Wyoming ASR: Transcript text: ' Detta ‰r fˆrstatestat.'
+Wyoming ASR: Transcription complete, buffer and parser state reset
+Wyoming: Buffer cleared by message handler, stopping parse loop
+```
 
-#### 2. Socket Polling with Write-Readiness ([wyoming.c:585-597](app/wyoming.c#L585-L597))
-Non-blocking socket requires poll() to wait for writability before send().
+#### Andra anropet (FUNGERAR INTE):
+```
+Wyoming ASR: All events sent, waiting for transcript
+(INGET SVAR TAS EMOT - ingen "Received X bytes from socket")
+```
 
-#### 3. WAV Header Construction ([wyoming.c:230-247](app/wyoming.c#L230-L247))
-Converts Wyoming's binary PCM chunks into playable WAV file with correct headers.
+### Teknisk Analys
 
-#### 4. Playback Buffer Fix ([main.c:182-186](app/main.c#L182-L186))
-Critical fix: Added `write_pos = num_samples` so playback completion check works correctly.
+**Rotorsak:** Problem med receive buffer (`rx_buffer`) och parser state efter fˆrsta transcript-meddelandet.
 
-### Build Configuration
-- [app/Makefile](app/Makefile) - Added wyoming.c to build (line 2)
-- [app/manifest.json](app/manifest.json) - Changed runMode to "respawn" for auto-start
+**Uppdaterad Debug Info Behˆvs:**
+- Lade till loggning i `wyoming_poll_callback()` fˆr att se om `poll()` returnerar events
+- Lade till loggning fˆr `POLLIN` events
+- Behˆver se om servern skickar data men klienten inte l‰ser den
 
-## Testing Instructions
+**Fˆrsˆkta Fixar (Inte Lˆst):**
 
-### 1. Test Wyoming TTS (Recommended) üÜï
+1. **Fix #1:** Nollst‰llning av buffer i `wyoming_process_message()` efter transcript
+   - L‰ge: [wyoming.c:342-348](app/wyoming.c#L342-L348)
+   - Resultat: Bufferten nollst‰lls korrekt, men problemet kvarstÂr
+
+2. **Fix #2:** Break ur parse-loop om bufferten nollst‰lls
+   - L‰ge: [wyoming.c:636-641](app/wyoming.c#L636-L641)
+   - Resultat: Loop bryts korrekt ("Buffer cleared by message handler"), men problemet kvarstÂr
+
+3. **Fix #3:** Fˆrhindra ˆverskrivning av `rx_length` efter nollst‰llning
+   - L‰ge: [wyoming.c:665](app/wyoming.c#L665)
+   - Resultat: Skyddar mot ˆverskrivning, men problemet kvarstÂr
+
+4. **Fix #4:** Debug-loggning fˆr poll() events
+   - L‰ge: [wyoming.c:380](app/wyoming.c#L380) och [wyoming.c:408](app/wyoming.c#L408)
+   - Resultat: V‰ntar pÂ testresultat
+
+### Hypoteser
+
+1. **Socket-state problem:** Mˆjligen st‰ngs eller pausas socketen efter fˆrsta transcript?
+2. **Whisper-server problem:** Kanske servern inte skickar svar vid andra anropet?
+3. **Poll-timeout:** Kan `poll()` med 0 timeout missa events?
+4. **Async response tracking:** `awaiting_response` flaggan nollst‰lls korrekt men kanske finns race condition?
+
+### N‰sta Steg fˆr Felsˆkning
+
+1. **Kˆr med nya debug-loggar** fˆr att se:
+   - Om `poll()` returnerar events vid andra anropet
+   - Om `POLLIN` s‰tts korrekt pÂ file descriptor
+   - Om servern verkligen skickar data
+
+2. **Testa direkt med netcat** fˆr att bekr‰fta att Whisper-servern fungerar:
+   ```bash
+   echo '{"type":"transcribe","version":"1.0.0","data_length":17}
+   {"language":"sv"}' | nc 10.13.8.2 10300
+   ```
+
+3. **÷verv‰g alternativa lˆsningar:**
+   - St‰ng och Âteranslut Whisper-socket efter varje transcript
+   - Anv‰nd blocking socket ist‰llet fˆr non-blocking
+   - L‰gg till timeout i `poll()` (t.ex. 100ms ist‰llet fˆr 0)
+
+### Relaterade Filer
+- [app/wyoming.c](app/wyoming.c) - Wyoming protocol TCP klient (~1240 rader)
+- [app/main.c](app/main.c) - STT record_start/stop endpoints
+- [app/html/index.html](app/html/index.html) - Push-to-talk UI
+
+### Workaround
+**Tempor‰r lˆsning:** Starta om ACAP-applikationen mellan STT-anrop (ej praktiskt fˆr produktion)
+
+---
+
+## Senaste ƒndringar
+
+### 2025-12-11 - Wyoming STT Debugging
+- Lade till buffer/parser state reset efter transcript (rad 342-348)
+- Lade till break ur parse-loop vid buffer clear (rad 636-641)
+- Skyddade mot rx_length ˆverskrivning (rad 665)
+- Lade till debug-loggning fˆr poll events (rad 380, 408)
+- **Status:** Bug kvarstÂr, v‰ntar pÂ debug-output
+
+### 2025-12-10 - Wyoming TTS Implementation
+-  Kompletterade Steps 1-4
+-  TTS fungerar perfekt med Piper
+-  Real-time WAV konstruktion frÂn PCM chunks
+-  Automatisk uppspelning efter syntes
+
+---
+
+## TODO
+
+### Hˆgprioriterat
+- [ ] **FIXA STT BUG** - Kritiskt fˆr push-to-talk funktionalitet
+- [ ] FÂ MQTT publish att fungera (transcript topic)
+- [ ] Testa med l‰ngre audio clips (>5 sekunder)
+
+### N‰sta Features (Efter Bugfix)
+- [ ] Voice Activity Detection (VAD) fˆr auto-stop
+- [ ] Wake-word detection integration
+- [ ] Kontinuerlig input stream
+- [ ] Buffrad recording fˆr l‰ngre meddelanden
+
+---
+
+## Build & Test Commands
+
 ```bash
-# Test synthesis and playback
-curl -X POST -H 'Content-Type: application/json' \
-  --digest -u nodered:rednode \
-  http://speaker.internal/local/voice/speak \
-  -d '{"text":"Hej fr√•n r√∂stassistenten"}'
+# Build
+docker run --rm -v $PWD:/opt/app -w /opt/app axisecp/acap-native-sdk:12.0-armv7hf-ubuntu24.04 make
 
-# Monitor status
-curl --digest -u nodered:rednode http://speaker.internal/local/voice/status
+# Install
+./install.sh
 
-# Check/update settings
-curl --digest -u nodered:rednode http://speaker.internal/local/voice/settings
-```
-**Expected:** Audio plays through speaker within 1-2 seconds
+# Test STT via UI
+# 1. ÷ppna http://speaker.internal/local/voice/index.html
+# 2. Tryck och hÂll Push-to-Talk knappen
+# 3. Sl‰pp fˆr att stoppa och transkribera
 
-### 2. Test WAV Playback (From URL)
-```bash
-# Trigger playback on speaker
-curl -X POST http://speaker.internal/local/voice/playback \
-  -d "http://10.13.8.183:5001/test.wav"
+# Test direkt med curl
+curl -X POST http://speaker.internal/local/voice/record_start
+sleep 2
+curl -X POST http://speaker.internal/local/voice/record_stop
 
-# Monitor status
-watch curl -s http://speaker.internal/local/voice/status
-```
-
-### 3. Test Network Connectivity
-```bash
-curl http://speaker.internal/local/voice/test_download
-```
-**Expected:** `SUCCESS: Downloaded N bytes from http://httpbin.org/get (HTTP 200)`
-
-### 4. Expected Log Output (Success)
-```
-Wyoming TTS: connected to 10.13.8.2:10200
-Wyoming TTS: sending synthesize request
-Wyoming: Received audio-start
-Wyoming: Received audio-chunk, payload 2048 bytes
-Wyoming: Binary mode - received 2048 bytes of PCM data
-Wyoming: Received audio-stop
-Wyoming: Synthesis complete, 63744 total bytes
-WAV: 22050 Hz, 1 channels, 16 bits, format=1
-Converting 31872 samples from PCM16 to F32...
-WAV loaded: 31872 samples (1.45 seconds at 22050 Hz)
-Playback completed (31872 samples)
+# Monitor logs
+ssh root@speaker.internal 'tail -f /var/log/messages | grep voice'
 ```
 
 ---
 
-## Future Roadmap
-
-### ‚úÖ Steps 1-4: COMPLETED
-- ‚úÖ Step 1: WAV playback from URL
-- ‚úÖ Step 2-4: Wyoming protocol TCP client
-- ‚úÖ TTS synthesis (Piper)
-- ‚úÖ Swedish language support
-- ‚úÖ Automatic playback after synthesis
-
-### Step 5: Continuous Input Stream (NEXT)
-- Start input stream on initialization
-- Listen for wake-word detection
-- Process audio in `audio_input_callback()`
-- Integrate wake-word library (Porcupine, Snowboy, etc.)
-
-### Step 6: VAD-Triggered Recording
-- Detect wake-word
-- Start second capture stream for speech recording
-- Run Voice Activity Detection
-- End recording on silence detection
-- Buffer audio for speech recognition
-
-### Step 7: Speech Recognition (Wyoming Whisper)
-- Send recorded audio to Wyoming-whisper server (10.13.8.2:10300)
-- Receive transcription/intent
-- Process user commands
-
-### Step 8: Full Voice Assistant Loop
-```
-Continuous Input (wake-word detection)
-    ‚Üì
-Wake-word detected!
-    ‚Üì
-Record speech (VAD)
-    ‚Üì
-Send to Wyoming-whisper
-    ‚Üì
-Receive transcription
-    ‚Üì
-Process intent
-    ‚Üì
-Generate TTS (Wyoming-piper) ‚Üê WORKING!
-    ‚Üì
-Playback response ‚Üê WORKING!
-    ‚Üì
-Resume wake-word listening
-```
-
----
-
-## Key Implementation Details
-
-### Threading Model
-```
-Main Thread:
-  ‚îú‚îÄ GLib Main Loop (g_main_loop_run)
-  ‚îú‚îÄ PipeWire event loop integration (via GSource)
-  ‚îú‚îÄ Audio callbacks (input/output)
-  ‚îî‚îÄ Idle callbacks (start_playback_idle)
-
-FastCGI Thread (pthread):
-  ‚îú‚îÄ HTTP request handlers
-  ‚îú‚îÄ Downloads WAV files (blocking)
-  ‚îî‚îÄ Queues work to main thread via g_idle_add()
-```
-
-**Critical Rule:** All PipeWire stream creation MUST happen in main thread!
-
-### Status Groups
-```
-input.*
-  ‚îú‚îÄ state: false (not yet used)
-  ‚îú‚îÄ samples: 0
-  ‚îî‚îÄ status: "Not running"
-
-output.*
-  ‚îú‚îÄ state: true/false (playing or not)
-  ‚îú‚îÄ samples: current position
-  ‚îú‚îÄ size: total samples in buffer
-  ‚îú‚îÄ status: "Playing audio..." / "Ready"
-  ‚îî‚îÄ error: error messages
-```
-
-### Concurrent Streams Design
-- Input and output are completely independent
-- No mutual exclusion locks between them
-- Each has its own AudioStream state
-- Foundation for wake-word + playback simultaneously
-
----
-
-## Known Limitations
-
-1. **WAV Format Only**
-   - PCM 16-bit mono only
-   - No MP3, OGG, or other formats
-   - No stereo support
-
-2. **Blocking Downloads**
-   - WAV download blocks FastCGI thread
-   - Large files may timeout
-   - Consider async download in future
-
-3. **No Streaming Playback**
-   - Entire WAV must be downloaded first
-   - Cannot stream large files
-   - Memory usage proportional to file size
-
-4. **Single Playback Instance**
-   - Cannot queue multiple playback requests
-   - Must wait for current playback to finish
-
----
-
-## Troubleshooting
-
-### Wyoming Connection Issues
-**Symptom:** "Wyoming TTS: connect failed" or timeout errors
-
-**Checklist:**
-1. Verify Wyoming server is running: `echo '{"type":"describe"}' | nc 10.13.8.2 10200`
-2. Check network routing from speaker to Wyoming server
-3. Verify port 10200 (Piper) or 10300 (Whisper) is accessible
-4. Check Wyoming server logs for connection attempts
-5. Test from dev machine first: `curl speaker.internal/local/voice/test_wyoming?service=piper`
-
-### No Audio Output
-**Symptom:** TTS synthesis succeeds but no sound
-
-**Checklist:**
-1. Check device speaker volume/mute
-2. Verify PipeWire routing with logs (look for AudioDevice0Output0)
-3. Check audio format compatibility (should be 22050 Hz, 16-bit, mono)
-4. Monitor status endpoint: `curl speaker.internal/local/voice/status`
-5. Look for "Playback completed (N samples)" in logs
-
-### Playback Buffer Issues
-**Symptom:** "Playback completed (0 samples)" immediately
-
-**Cause:** Missing `write_pos` assignment in playback buffer
-**Fix:** Ensure both `size` and `write_pos` are set when loading audio
-
-### Build Errors
-**Most Common:**
-- Missing PKG_CONFIG_PATH for cross-compilation
-- Undefined symbols ‚Üí missing library in LDLIBS
-- Include path issues ‚Üí check CFLAGS
-- New files not in Makefile ‚Üí update OBJS1 variable
-
----
-
-## Files Modified
-
-### Wyoming Protocol Implementation (NEW)
-- [app/wyoming.c](app/wyoming.c) - Complete Wyoming protocol TCP client (~616 lines)
-- [app/wyoming.h](app/wyoming.h) - Public API for Wyoming client (~128 lines)
-
-### Core Application
-- [app/main.c](app/main.c) - Voice assistant with Wyoming TTS integration
-  - Added Wyoming audio callback handler
-  - Fixed playback buffer (write_pos assignment)
-  - Fixed WAV parsing (PCM data offset)
-  - Added `/local/voice/speak` endpoint
-  - Added `/local/voice/settings` endpoint
-
-### Build and Configuration
-- [app/Makefile](app/Makefile) - Added wyoming.c to OBJS1
-- [app/manifest.json](app/manifest.json) - Changed runMode to "respawn"
-  - Added `/speak` endpoint (viewer access)
-  - Added `/settings` endpoint (admin access)
-  - Added `/test_wyoming` endpoint (viewer access)
-
-### Documentation
-- [ARCHITECTURE.md](ARCHITECTURE.md) - Updated with Wyoming TTS details
-- [work-in-progress.md](work-in-progress.md) - Updated to reflect Steps 1-4 complete
-
-### PipeWire Integration (Unchanged)
-- [app/pipewire_audio.c](app/pipewire_audio.c) - GSource cleanup fix
-- [app/pipewire_audio.h](app/pipewire_audio.h) - `pw_audio_init()` added
-
----
-
-## Success Criteria
-
-### Steps 1-4 (Completed) ‚úÖ
-- [x] Architecture redesigned for voice assistant
-- [x] Separate input/output stream management
-- [x] HTTP POST /playback endpoint implemented
-- [x] WAV download via curl
-- [x] WAV parsing and validation
-- [x] PCM16 to F32 conversion
-- [x] Playback buffer management
-- [x] Status reporting (input.*, output.*)
-- [x] Network connectivity verified and working
-- [x] WAV playback tested and working
-- [x] Audio plays through speaker
-- [x] Wyoming protocol TCP client implemented
-- [x] Non-blocking socket with poll() for write-readiness
-- [x] Brace-counting JSON parser for complex protocol
-- [x] State machine for JSON ‚Üî binary mode switching
-- [x] Real-time WAV construction from PCM chunks
-- [x] HTTP POST /speak endpoint for TTS
-- [x] Swedish TTS synthesis working
-- [x] Configuration endpoint (/settings)
-- [x] Multiple successful playback tests (63744, 36864, 56064 samples)
-
-### Future Steps
-- [ ] Step 5: Continuous input stream (wake-word detection)
-- [ ] Step 6: VAD-triggered recording
-- [ ] Step 7: Speech recognition (Wyoming Whisper)
-- [ ] Step 8: Full voice assistant loop
-
----
-
-**Last Updated:** 2025-12-10
-**Current Status:** Steps 1-4 Complete - Wyoming TTS Fully Working! üéâ
-**Next Step:** Implement continuous input stream for wake-word detection (Step 5)
-
----
-
-## Reference Documentation
-
-- SSW Audio Reference: `/home/fred/ACAP/ssw-audio/`
-- PipeWire Docs: https://docs.pipewire.org/
-- GLib Main Loop: https://docs.gtk.org/glib/main-loop.html
-- ACAP SDK: Axis Camera Application Platform documentation
-- Wyoming Protocol: https://github.com/rhasspy/wyoming
+**Senast uppdaterad:** 2025-12-11 22:30
+**Status:** =4 Aktiv debugging pÂgÂr - STT bug prioritet 1

@@ -15,7 +15,8 @@
 
 #define LOG(fmt, args...)    { syslog(LOG_INFO, fmt, ## args); printf(fmt, ## args);}
 #define LOG_WARN(fmt, args...)    { syslog(LOG_WARNING, fmt, ## args); printf(fmt, ## args);}
-#define LOG_TRACE(fmt, args...)    { syslog(LOG_INFO, fmt, ## args); printf(fmt, ## args); }
+//#define LOG_TRACE(fmt, args...)    { syslog(LOG_INFO, fmt, ## args); printf(fmt, ## args); }
+#define LOG_TRACE(fmt, args...)    {}
 
 #define SAMPLE_RATE_MIN     8000
 #define DEFAULT_INPUT_NODE  "AudioDevice0Input0"
@@ -219,7 +220,7 @@ on_param_changed(void *data, uint32_t id, const struct spa_pod *param)
     spa_format_audio_raw_parse(param, &stream_data->info.info.raw);
 
     if (pa->debug) {
-        LOG("Audio stream from node %s, %d channel(s), rate %d\n",
+        LOG_TRACE("Audio stream from node %s, %d channel(s), rate %d\n",
             stream_data->node_name,
             stream_data->info.info.raw.channels,
             stream_data->info.info.raw.rate);
@@ -236,7 +237,7 @@ on_state_changed(void *data,
     PWAudio *pa = stream_data->pa;
 
     if (pa->debug) {
-        LOG("Stream state changed %s -> %s\n",
+        LOG_TRACE("Stream state changed %s -> %s\n",
             pw_stream_state_as_string(old),
             pw_stream_state_as_string(state));
     }
@@ -275,7 +276,7 @@ pw_registry_event_global(void *userdata,
         const char *name = spa_dict_lookup(props, PW_KEY_NODE_NAME);
 
         // ALWAYS log all nodes to see what's available
-        LOG("pw_registry_event_global: Found Node: media_class=%s, name=%s (looking for %s, detected=%d)\n",
+        LOG_TRACE("pw_registry_event_global: Found Node: media_class=%s, name=%s (looking for %s, detected=%d)\n",
             media_class ? media_class : "NULL",
             name ? name : "NULL",
             pa->wanted_node_name,
@@ -300,11 +301,11 @@ pw_registry_event_global(void *userdata,
 
         pa->node_detected = TRUE;
 
-        LOG("*** FOUND AUDIO NODE! media_class=%s, name=%s, id=%u\n",
+        LOG_TRACE("*** FOUND AUDIO NODE! media_class=%s, name=%s, id=%u\n",
             media_class ? media_class : "NULL", name, id);
 
         if (pa->debug) {
-            LOG("Detected %s node %s with id %u\n", media_class, name, id);
+            LOG_TRACE("Detected %s node %s with id %u\n", media_class, name, id);
         }
 
         /* Set stream direction based on type */
@@ -412,7 +413,7 @@ pw_registry_event_global_remove(void *data, uint32_t id)
     spa_list_for_each(stream_data, &pa->streams, link) {
         if (stream_data->node_id == id) {
             if (pa->debug) {
-                LOG("Destroy stream from %s\n", stream_data->node_name);
+                LOG_TRACE("Destroy stream from %s\n", stream_data->node_name);
             }
             spa_hook_remove(&stream_data->stream_listener);
             pw_stream_destroy(stream_data->stream);
@@ -661,7 +662,7 @@ pw_audio_stop(PWAudio *pa)
     struct stream_data *stream_data;
     spa_list_consume(stream_data, &pa->streams, link) {
         if (pa->debug) {
-            LOG("Destroy stream with target node %s\n", stream_data->node_name);
+            LOG_TRACE("Destroy stream with target node %s\n", stream_data->node_name);
         }
         spa_hook_remove(&stream_data->stream_listener);
         pw_stream_destroy(stream_data->stream);
