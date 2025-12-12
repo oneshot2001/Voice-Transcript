@@ -1,17 +1,17 @@
 # Voice Assistant ACAP
 
-A voice assistant application for Axis network speaker devices, featuring Wyoming protocol integration for Text-to-Speech (TTS) synthesis and future support for wake-word detection and speech recognition.
+A voice assistant application for Axis network speaker devices, featuring Wyoming protocol integration for Text-to-Speech (TTS) and Speech-to-text (STT).
 
 ## Overview
 
 This ACAP (Axis Camera Application Platform) application transforms Axis network speakers into intelligent voice assistants. Built on PipeWire for audio I/O, the application provides direct TCP integration with Wyoming protocol servers (Piper for TTS, Whisper for ASR) and supports concurrent audio streams for simultaneous listening and speaking.
 
 **Platform:** Freescale i.MX6 Ultralite ARM (armv7hf)
-**Target Device:** Axis Network Speaker (e.g., C8210 Network Audio Bridge)
+**Target Device:** Axis Network Device with audio input and output.
 
 ## 🚀 Key Features
 
-### Current Implementation (v0.5.0)
+### Current Implementation (v0.9.0)
 
 ✅ **Wyoming Protocol TTS Integration**
 - Direct TCP connection to Wyoming Piper server (no HTTP intermediary)
@@ -165,64 +165,6 @@ Example response:
 }
 ```
 
-## 🏗️ Architecture
-
-### Wyoming Protocol Implementation
-
-The application implements a custom Wyoming protocol TCP client with:
-
-1. **Non-blocking Sockets** - Uses poll() with timeout for write-readiness
-2. **Brace-Counting JSON Parser** - Handles multiple JSON objects per line without whitespace
-3. **State Machine** - Switches between JSON parsing and binary PCM data modes
-4. **WAV Construction** - Builds complete WAV files from streaming PCM chunks
-
-**Protocol Flow:**
-```
-Client → Server: {"type":"synthesize","data":{"text":"Hej"}}
-Server → Client: {"type":"audio-start",...}
-Server → Client: {"type":"audio-chunk",...,"payload_length":2048}
-Server → Client: {"rate":22050,"width":2,"channels":1,...}
-Server → Client: [2048 bytes of binary PCM data]
-Server → Client: ... (more chunks)
-Server → Client: {"type":"audio-stop",...}
-```
-
-### Threading Model
-
-```
-Main Thread:
-  ├─ GLib Main Loop (g_main_loop_run)
-  ├─ PipeWire event loop integration (via GSource)
-  ├─ Audio callbacks (input/output)
-  └─ Idle callbacks (start_playback_idle)
-
-FastCGI Thread:
-  ├─ HTTP request handlers
-  ├─ WAV downloads (blocking)
-  └─ Queues work to main thread via g_idle_add()
-```
-
-**Critical Rule:** All PipeWire stream operations happen in main thread!
-
-## 🔧 Technical Details
-
-### Key Components
-
-- [app/main.c](app/main.c) - Main application, HTTP handlers, audio playback
-- [app/wyoming.c](app/wyoming.c) - Wyoming protocol TCP client (~616 lines)
-- [app/wyoming.h](app/wyoming.h) - Wyoming client API
-- [app/pipewire_audio.c](app/pipewire_audio.c) - PipeWire wrapper library
-- [app/ACAP.c](app/ACAP.c) - ACAP framework wrapper
-
-### Dependencies
-
-- `libpipewire-0.3` - Audio subsystem
-- `libcurl` - HTTP downloads
-- `glib-2.0` - Main loop and utilities
-- `gio-2.0` - I/O operations
-- `fcgi` - FastCGI web server
-- `axevent` - Axis event system (ACAP SDK)
-- `vdostream` - Video/audio device access (ACAP SDK)
 
 ### Wyoming Server Setup
 
@@ -302,49 +244,6 @@ python -m wyoming_faster_whisper \
 - `--compute-type`: `float16` (faster), `int8` (fastest), `float32` (most accurate)
 - `--beam-size`: Lower = faster, Higher = more accurate (1-5 recommended)
 
-## 🛣️ Roadmap
-
-### ✅ Steps 1-7: COMPLETED (v0.9.0)
-- ✅ WAV playback from URL
-- ✅ Wyoming protocol TCP client
-- ✅ TTS synthesis (Piper)
-- ✅ STT transcription (Faster-Whisper)
-- ✅ Push-to-talk interface
-- ✅ MQTT integration with device serial
-- ✅ Swedish & English language support
-
-### 🔜 Future Development
-
-**Step 8: Continuous Input Stream**
-- Start input stream on initialization
-- Process audio in real-time
-- Integrate wake-word detection library (Porcupine, Snowboy)
-
-**Step 9: VAD-Triggered Recording**
-- Detect wake-word and start recording automatically
-- Voice Activity Detection (VAD)
-- End recording on silence detection
-
-**Step 10: Full Voice Assistant Loop**
-```
-Continuous Input (wake-word detection)
-    ↓
-Wake-word detected!
-    ↓
-Record speech (VAD)
-    ↓
-Send to Wyoming-whisper ← WORKING!
-    ↓
-Receive transcription ← WORKING!
-    ↓
-Process intent
-    ↓
-Generate TTS (Wyoming-piper) ← WORKING!
-    ↓
-Playback response ← WORKING!
-    ↓
-Resume wake-word listening
-```
 
 ## 🐛 Troubleshooting
 
@@ -369,115 +268,15 @@ Resume wake-word listening
 4. Monitor status endpoint for error messages
 5. Look for "Playback completed (N samples)" in logs
 
-### Build Errors
 
-**Common issues:**
-- Missing PKG_CONFIG_PATH for cross-compilation
-- Undefined symbols → missing library in LDLIBS
-- Include path issues → check CFLAGS
-- New files not in Makefile → update OBJS1 variable
-
-## 📚 Documentation
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) - Detailed system architecture
-- [work-in-progress.md](work-in-progress.md) - Development progress and testing
-- [Wyoming Protocol](https://github.com/rhasspy/wyoming) - Official protocol documentation
-- [PipeWire Docs](https://docs.pipewire.org/) - Audio subsystem reference
-
-## 📈 Performance
-
-### Memory Usage
-- Base: ~1 MB (application + libraries)
-- Per WAV file: ~4 bytes per sample (F32)
-- Example: 10 seconds at 16kHz = 160,000 samples = 640 KB
-
-### CPU Usage
-- Idle: <1% CPU
-- Download: ~5% CPU (network I/O)
-- Playback: <2% CPU (memory copy)
-- TTS synthesis: <5% CPU (TCP I/O + parsing)
-
-### Network
-- Bandwidth: Depends on WAV file size
-- Typical TTS response: 50-200 KB
-- Latency: 1-2 seconds from request to audio start
-
-## 🔒 Security
-
-- HTTP digest authentication required for sensitive endpoints
-- Network-isolated Wyoming protocol (no internet exposure)
-- Read-only file system (ACAP sandbox)
-- Limited system permissions (pipewire group only)
 
 ## 📝 Version History
 
 ### 0.9.0 - December 11, 2025
-- Wyoming Protocol STT Integration
-  - Push-to-talk interface in web UI
-  - Direct TCP connection to Wyoming Faster-Whisper server
-  - Real-time audio recording from microphone
-  - Transcription via `/listen_start`, `/listen_stop`, `/transcription` endpoints
-- MQTT Topics with Device Serial
-  - Auto-configured topics: `voice/{action}/{SERIAL}`
-  - Subscribe: `voice/speak/{SERIAL}`, `voice/playback/{SERIAL}`, `voice/listen/start/{SERIAL}`, `voice/listen/stop/{SERIAL}`
-  - Publish: `voice/connect/{SERIAL}`, `voice/transcript/{SERIAL}`
-- HTTP API Improvements
-  - `/playback` now accepts JSON: `{"url":"..."}`
-  - New `/transcription` endpoint for retrieving last STT result
-  - Renamed endpoints: `record_start` → `listen_start`, `record_stop` → `listen_stop`
-  - Removed test endpoints
-- UI Enhancements
-  - Added API documentation in About page
-  - MQTT topics documentation
-  - Buy Me a Coffee support link
-- Bug Fixes
-  - Fixed STT buffer management after transcription
-  - Fixed HTTP response type in transcription endpoint
-
-### 0.5.0 - December 10, 2025
-- Wyoming Protocol TTS Integration
-  - Direct TCP connection to Wyoming Piper server
-  - Complex JSON + binary protocol parsing
-  - Non-blocking socket I/O with poll()
-  - Real-time WAV construction from PCM chunks
-- Initial HTTP endpoints and audio playback system
-
-### Initial Release
-- Basic ACAP project structure
-- PipeWire audio framework
-- FastCGI HTTP server
-- ACAP SDK integration
+- Initial commit
 
 ## 👤 Author
 
 **Fred Juhlin**
 Website: https://pandosme.github.io
 
-## 📄 License
-
-MIT License
-
-Copyright (c) 2025 Fred Juhlin
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
----
-
-**Status:** Steps 1-7 Complete - Wyoming TTS & STT Fully Working! 🎉
-**Next Step:** Continuous input stream for wake-word detection (Step 8)

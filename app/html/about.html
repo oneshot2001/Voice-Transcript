@@ -143,8 +143,22 @@
             </div>
 
             <div class="row">
-                <!-- Application Information -->
+                <!-- LEFT COLUMN -->
                 <div class="col-lg-6">
+                    <!-- Buy Me a Coffee Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Support Development</h5>
+                        </div>
+                        <div class="card-body text-center">
+                            <p class="text-muted mb-3">If you find this ACAP useful, consider supporting development:</p>
+                            <a href="https://www.buymeacoffee.com/fredjuhlinl" target="_blank" rel="noopener noreferrer" class="btn btn-warning btn-lg">
+                                ☕ Buy Me a Coffee
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Application Information -->
                     <div class="card">
                         <div class="card-header">
                             <h5 class="card-title mb-0">Application Information</h5>
@@ -187,9 +201,37 @@
                         </div>
                     </div>
 
+                    <!-- Device Information -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Device Information</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="info-grid">
+                                <div class="info-row">
+                                    <div class="info-label">Device Model</div>
+                                    <div class="info-value"><span id="model"></span></div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Serial Number</div>
+                                    <div class="info-value"><code id="serial"></code></div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Firmware Version</div>
+                                    <div class="info-value">
+                                        <span class="badge bg-info badge-custom" id="firmware"></span>
+                                    </div>
+                                </div>
+                                <div class="info-row">
+                                    <div class="info-label">Platform/Chip</div>
+                                    <div class="info-value"><span id="chip"></span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- HTTP API Documentation -->
+                <!-- RIGHT COLUMN -->
                 <div class="col-lg-6">
                     <div class="card">
                         <div class="card-header">
@@ -249,37 +291,6 @@
                             </div>
                         </div>
                     </div>
-                </div>
-
-                <!-- Device Information -->
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">Device Information</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="info-grid">
-                                <div class="info-row">
-                                    <div class="info-label">Device Model</div>
-                                    <div class="info-value"><span id="model"></span></div>
-                                </div>
-                                <div class="info-row">
-                                    <div class="info-label">Serial Number</div>
-                                    <div class="info-value"><code id="serial"></code></div>
-                                </div>
-                                <div class="info-row">
-                                    <div class="info-label">Firmware Version</div>
-                                    <div class="info-value">
-                                        <span class="badge bg-info badge-custom" id="firmware"></span>
-                                    </div>
-                                </div>
-                                <div class="info-row">
-                                    <div class="info-label">Platform/Chip</div>
-                                    <div class="info-value"><span id="chip"></span></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
 
                     <!-- MQTT Topics Documentation -->
                     <div class="card">
@@ -323,39 +334,39 @@
                         </div>
                     </div>
 
-                    <!-- Documentation Card -->
+                    <!-- Documentation & Support Card -->
                     <div class="card">
                         <div class="card-header">
                             <h5 class="card-title mb-0">Documentation & Support</h5>
                         </div>
                         <div class="card-body">
-                            <p class="text-muted">
-                                For more information about the Wyoming Protocol, visit:
-                            </p>
+                            <h6 class="mb-2">Project Repository</h6>
+                            <ul class="list-unstyled mb-3">
+                                <li class="mb-2">
+                                    🔗 <a href="https://github.com/pandosme/Voice" target="_blank" rel="noopener noreferrer">
+                                        Voice Assistant ACAP on GitHub
+                                    </a>
+                                </li>
+                            </ul>
+
+                            <h6 class="mb-2 mt-3">Wyoming Protocol Components</h6>
                             <ul class="list-unstyled">
                                 <li class="mb-2">
                                     🔗 <a href="https://github.com/rhasspy/wyoming" target="_blank" rel="noopener noreferrer">
-                                        Wyoming Protocol GitHub
+                                        Wyoming Protocol
                                     </a>
                                 </li>
                                 <li class="mb-2">
                                     🔗 <a href="https://github.com/rhasspy/piper" target="_blank" rel="noopener noreferrer">
-                                        Piper TTS GitHub
+                                        Piper TTS
                                     </a>
                                 </li>
                                 <li class="mb-2">
                                     🔗 <a href="https://github.com/rhasspy/faster-whisper-server" target="_blank" rel="noopener noreferrer">
-                                        Faster Whisper Server
+                                        Faster Whisper STT
                                     </a>
                                 </li>
                             </ul>
-                            <hr>
-                            <div class="text-center mt-3">
-                                <p class="text-muted mb-2">If you find this ACAP useful, consider supporting development:</p>
-                                <a href="https://www.buymeacoffee.com/fredjuhlinl" target="_blank" rel="noopener noreferrer" class="btn btn-warning">
-                                    ☕ Buy Me a Coffee
-                                </a>
-                            </div>
                         </div>
                     </div>
                 </div>

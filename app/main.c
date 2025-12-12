@@ -94,8 +94,39 @@ static char device_serial[32] = {0};  // Device serial number
 void
 Settings_Updated_Callback( const char* service, cJSON* data) {
 	char* json = cJSON_PrintUnformatted(data);
-	LOG_TRACE("%s: Service=%s Data=%s\n",__func__, service, json);
+	LOG("%s: Service=%s Data=%s\n",__func__, service, json);
 	free(json);
+
+	// Apply Wyoming configuration changes
+	if (strcmp(service, "settings") == 0) {
+		cJSON* wyoming_ip = cJSON_GetObjectItem(data, "wyoming");
+		cJSON* piper_port = cJSON_GetObjectItem(data, "piper");
+		cJSON* whisper_port = cJSON_GetObjectItem(data, "whisper");
+		cJSON* language = cJSON_GetObjectItem(data, "language");
+
+		if (wyoming_ip && cJSON_IsString(wyoming_ip) &&
+		    piper_port && cJSON_IsNumber(piper_port) &&
+		    whisper_port && cJSON_IsNumber(whisper_port) &&
+		    language && cJSON_IsString(language)) {
+
+			// Disconnect existing connections
+			LOG("Disconnecting old Wyoming connections before applying new settings...\n");
+			wyoming_disconnect(WYOMING_SERVICE_PIPER);
+			wyoming_disconnect(WYOMING_SERVICE_WHISPER);
+
+			// Apply new configuration
+			if (wyoming_configure(wyoming_ip->valuestring,
+			                     piper_port->valueint,
+			                     whisper_port->valueint,
+			                     language->valuestring) == 0) {
+				LOG("Wyoming settings updated successfully\n");
+			} else {
+				LOG_WARN("Failed to apply Wyoming settings\n");
+			}
+		} else {
+			LOG_WARN("Invalid Wyoming settings format\n");
+		}
+	}
 }
 
 void
@@ -122,7 +153,18 @@ typedef struct __attribute__((packed)) {
     uint32_t data_size;
 } WavHeader;
 
+// WAV format info structure (for dynamic parsing)
+typedef struct {
+    uint32_t sample_rate;
+    uint16_t num_channels;
+    uint16_t bits_per_sample;
+    uint16_t audio_format;
+    const uint8_t *pcm_data;
+    uint32_t pcm_data_size;
+} WavInfo;
+
 static gboolean start_playback_idle(gpointer user_data);
+static int parse_wav_file(const uint8_t *wav_data, size_t wav_size, WavInfo *info);
 
 // Wyoming connection state callback
 void
@@ -150,6 +192,7 @@ wyoming_transcript_callback(const char* text) {
     ACAP_STATUS_SetString("stt", "last_transcript", text);
 
     // Publish transcription to MQTT topic: voice/transcript/{SERIAL}
+    // Note: MQTT_Publish_JSON() adds "voice/" prefix automatically
     char topic[128];
     snprintf(topic, sizeof(topic), "transcript/%s", device_serial);
 
@@ -183,81 +226,144 @@ wyoming_audio_callback(WyomingServiceType service, const unsigned char* data, si
         va_state.playback.samples = NULL;
     }
 
-    // Parse WAV header
-    if (length < sizeof(WavHeader)) {
-        LOG_WARN("Wyoming TTS: Audio data too small for WAV header\n");
-        return;
-    }
-
-    WavHeader *header = (WavHeader*)data;
-
-    // Validate WAV header
-    if (memcmp(header->riff, "RIFF", 4) != 0 || memcmp(header->wave, "WAVE", 4) != 0) {
-        LOG_WARN("Wyoming TTS: Invalid WAV header\n");
+    // Parse WAV file dynamically
+    WavInfo wav_info;
+    if (parse_wav_file(data, length, &wav_info) != 0) {
+        LOG_WARN("Wyoming TTS: Failed to parse WAV file\n");
         return;
     }
 
     LOG("WAV: %u Hz, %u channels, %u bits, format=%u\n",
-        header->sample_rate, header->num_channels, header->bits_per_sample, header->audio_format);
+        wav_info.sample_rate, wav_info.num_channels, wav_info.bits_per_sample, wav_info.audio_format);
 
-    // PCM data follows immediately after the header
-    // Our WavHeader struct already includes the "data" chunk marker and size
-    const unsigned char *ptr = data + sizeof(WavHeader);
-    const unsigned char *end = data + length;
-    uint32_t data_size = header->data_size;
-
-    if (ptr + data_size > end) {
-        LOG_WARN("WAV data extends beyond buffer (expected %u bytes, have %zu)\n",
-                 data_size, end - ptr);
+    // Validate format (16-bit PCM, mono)
+    if (wav_info.audio_format != 1 || wav_info.bits_per_sample != 16 || wav_info.num_channels != 1) {
+        LOG_WARN("Unsupported WAV format: format=%u bits=%u channels=%u\n",
+                 wav_info.audio_format, wav_info.bits_per_sample, wav_info.num_channels);
         return;
     }
 
     // Convert PCM16 to F32
-    if (header->audio_format == 1 && header->bits_per_sample == 16 && header->num_channels == 1) {
-        guint32 num_samples = data_size / 2;
-        va_state.playback.samples = malloc(num_samples * sizeof(float));
+    guint32 num_samples = wav_info.pcm_data_size / 2;
+    va_state.playback.samples = malloc(num_samples * sizeof(float));
 
-        if (!va_state.playback.samples) {
-            LOG_WARN("Failed to allocate playback buffer\n");
-            return;
-        }
-
-        const int16_t *pcm16 = (const int16_t*)ptr;
-        for (guint32 i = 0; i < num_samples; i++) {
-            va_state.playback.samples[i] = pcm16[i] / 32768.0f;
-        }
-
-        va_state.playback.size = num_samples;
-        va_state.playback.write_pos = num_samples;
-        va_state.playback.sample_rate = header->sample_rate;
-        va_state.playback.read_pos = 0;
-        va_state.playback.ready = TRUE;
-
-        LOG("TTS audio loaded: %u samples (%.2f seconds at %u Hz)\n",
-            num_samples, (float)num_samples / header->sample_rate, header->sample_rate);
-
-        // Publish MQTT status
-        cJSON* status = cJSON_CreateObject();
-        cJSON_AddStringToObject(status, "status", "playing");
-        cJSON_AddNumberToObject(status, "samples", num_samples);
-        cJSON_AddNumberToObject(status, "duration", (float)num_samples / header->sample_rate);
-        cJSON_AddNumberToObject(status, "sample_rate", header->sample_rate);
-        MQTT_Publish_JSON("voice/tts/status", status, 0, 0);
-        cJSON_Delete(status);
-
-        // Start playback
-        g_idle_add(start_playback_idle, NULL);
-    } else {
-        LOG_WARN("Unsupported WAV format: format=%u bits=%u channels=%u\n",
-                 header->audio_format, header->bits_per_sample, header->num_channels);
+    if (!va_state.playback.samples) {
+        LOG_WARN("Failed to allocate playback buffer\n");
+        return;
     }
+
+    const int16_t *pcm16 = (const int16_t*)wav_info.pcm_data;
+    for (guint32 i = 0; i < num_samples; i++) {
+        va_state.playback.samples[i] = pcm16[i] / 32768.0f;
+    }
+
+    va_state.playback.size = num_samples;
+    va_state.playback.write_pos = num_samples;
+    va_state.playback.sample_rate = wav_info.sample_rate;
+    va_state.playback.read_pos = 0;
+    va_state.playback.ready = TRUE;
+
+    LOG("TTS audio loaded: %u samples (%.2f seconds at %u Hz)\n",
+        num_samples, (float)num_samples / wav_info.sample_rate, wav_info.sample_rate);
+
+    // Publish MQTT status
+    cJSON* status = cJSON_CreateObject();
+    cJSON_AddStringToObject(status, "status", "playing");
+    cJSON_AddNumberToObject(status, "samples", num_samples);
+    cJSON_AddNumberToObject(status, "duration", (float)num_samples / wav_info.sample_rate);
+    cJSON_AddNumberToObject(status, "sample_rate", wav_info.sample_rate);
+    MQTT_Publish_JSON("voice/tts/status", status, 0, 0);
+    cJSON_Delete(status);
+
+    // Start playback
+    g_idle_add(start_playback_idle, NULL);
 }
 
 // =============================================================================
 // WAV FILE HANDLING
 // =============================================================================
 
-// WavHeader is already defined in forward declarations above
+// WavHeader and WavInfo are already defined in forward declarations above
+
+// Parse WAV file by searching for fmt and data chunks dynamically
+// Returns 0 on success, -1 on error
+static int
+parse_wav_file(const uint8_t *wav_data, size_t wav_size, WavInfo *info) {
+    // Need at least RIFF header (12 bytes)
+    if (wav_size < 12) {
+        LOG_WARN("WAV: file too small (%zu bytes)\n", wav_size);
+        return -1;
+    }
+
+    // Verify RIFF header
+    if (memcmp(wav_data, "RIFF", 4) != 0 || memcmp(wav_data + 8, "WAVE", 4) != 0) {
+        LOG_WARN("WAV: invalid RIFF/WAVE header\n");
+        return -1;
+    }
+
+    // Initialize output
+    memset(info, 0, sizeof(WavInfo));
+    gboolean found_fmt = FALSE;
+    gboolean found_data = FALSE;
+
+    // Start searching for chunks after RIFF header
+    const uint8_t *ptr = wav_data + 12;
+    const uint8_t *end = wav_data + wav_size;
+
+    while (ptr + 8 <= end) {  // Need at least 8 bytes for chunk header
+        const char *chunk_id = (const char *)ptr;
+        uint32_t chunk_size = *(uint32_t *)(ptr + 4);
+        const uint8_t *chunk_data = ptr + 8;
+
+        // Verify chunk fits in buffer
+        if (chunk_data + chunk_size > end) {
+            LOG_WARN("WAV: chunk '%c%c%c%c' size %u exceeds buffer\n",
+                     chunk_id[0], chunk_id[1], chunk_id[2], chunk_id[3], chunk_size);
+            break;
+        }
+
+        // Parse fmt chunk
+        if (memcmp(chunk_id, "fmt ", 4) == 0) {
+            if (chunk_size < 16) {
+                LOG_WARN("WAV: fmt chunk too small (%u bytes)\n", chunk_size);
+                return -1;
+            }
+            info->audio_format = *(uint16_t *)(chunk_data + 0);
+            info->num_channels = *(uint16_t *)(chunk_data + 2);
+            info->sample_rate = *(uint32_t *)(chunk_data + 4);
+            // byte_rate at offset 8 (4 bytes)
+            // block_align at offset 12 (2 bytes)
+            info->bits_per_sample = *(uint16_t *)(chunk_data + 14);
+            found_fmt = TRUE;
+        }
+        // Parse data chunk
+        else if (memcmp(chunk_id, "data", 4) == 0) {
+            info->pcm_data = chunk_data;
+            info->pcm_data_size = chunk_size;
+            found_data = TRUE;
+        }
+
+        // Skip to next chunk (align to even boundary per RIFF spec)
+        ptr += 8 + ((chunk_size + 1) & ~1);
+
+        // Early exit if we found both chunks
+        if (found_fmt && found_data) {
+            break;
+        }
+    }
+
+    if (!found_fmt) {
+        LOG_WARN("WAV: 'fmt' chunk not found\n");
+        return -1;
+    }
+
+    if (!found_data) {
+        LOG_WARN("WAV: 'data' chunk not found\n");
+        return -1;
+    }
+
+    return 0;
+}
 
 // Convert 16-bit PCM to 32-bit float (-1.0 to 1.0)
 static void
@@ -517,52 +623,43 @@ download_and_load_wav(const char *url) {
 
     LOG("Downloaded %zu bytes\n", chunk.size);
 
-    // Parse WAV header
-    if (chunk.size < sizeof(WavHeader)) {
-        LOG_WARN("File too small to be a valid WAV\n");
+    // Parse WAV file dynamically (finds fmt and data chunks)
+    WavInfo wav_info;
+    if (parse_wav_file(chunk.data, chunk.size, &wav_info) != 0) {
+        LOG_WARN("Failed to parse WAV file\n");
         free(chunk.data);
         ACAP_STATUS_SetString("output", "error", "Invalid WAV file");
         return FALSE;
     }
 
-    WavHeader *hdr = (WavHeader *)chunk.data;
+    LOG("WAV: %u Hz, %u channels, %u bits, format=%u\n",
+        wav_info.sample_rate, wav_info.num_channels, wav_info.bits_per_sample, wav_info.audio_format);
 
-    // Validate WAV format
-    if (memcmp(hdr->riff, "RIFF", 4) != 0 || memcmp(hdr->wave, "WAVE", 4) != 0) {
-        LOG_WARN("Not a valid WAV file\n");
-        free(chunk.data);
-        ACAP_STATUS_SetString("output", "error", "Not a valid WAV file");
-        return FALSE;
-    }
-
-    LOG("WAV: %d Hz, %d channels, %d bits, format=%d\n",
-        hdr->sample_rate, hdr->num_channels, hdr->bits_per_sample, hdr->audio_format);
-
-    // Validate format (16-bit PCM, mono, 16kHz)
-    if (hdr->audio_format != 1) {
-        LOG_WARN("Only PCM format supported (got format %d)\n", hdr->audio_format);
+    // Validate format (16-bit PCM, mono)
+    if (wav_info.audio_format != 1) {
+        LOG_WARN("Only PCM format supported (got format %u)\n", wav_info.audio_format);
         free(chunk.data);
         ACAP_STATUS_SetString("output", "error", "Only PCM format supported");
         return FALSE;
     }
 
-    if (hdr->num_channels != 1) {
-        LOG_WARN("Only mono audio supported (got %d channels)\n", hdr->num_channels);
+    if (wav_info.num_channels != 1) {
+        LOG_WARN("Only mono audio supported (got %u channels)\n", wav_info.num_channels);
         free(chunk.data);
         ACAP_STATUS_SetString("output", "error", "Only mono audio supported");
         return FALSE;
     }
 
-    if (hdr->bits_per_sample != 16) {
-        LOG_WARN("Only 16-bit audio supported (got %d bits)\n", hdr->bits_per_sample);
+    if (wav_info.bits_per_sample != 16) {
+        LOG_WARN("Only 16-bit audio supported (got %u bits)\n", wav_info.bits_per_sample);
         free(chunk.data);
         ACAP_STATUS_SetString("output", "error", "Only 16-bit audio supported");
         return FALSE;
     }
 
     // Convert PCM16 to F32
-    guint32 num_samples = hdr->data_size / sizeof(int16_t);
-    int16_t *pcm_data = (int16_t *)(chunk.data + sizeof(WavHeader));
+    guint32 num_samples = wav_info.pcm_data_size / sizeof(int16_t);
+    const int16_t *pcm_data = (const int16_t *)wav_info.pcm_data;
 
     LOG("Converting %u samples from PCM16 to F32...\n", num_samples);
 
@@ -580,13 +677,13 @@ download_and_load_wav(const char *url) {
     va_state.playback.size = num_samples;
     va_state.playback.write_pos = num_samples;
     va_state.playback.read_pos = 0;
-    va_state.playback.sample_rate = hdr->sample_rate;  // Store sample rate
+    va_state.playback.sample_rate = wav_info.sample_rate;  // Store sample rate
     va_state.playback.ready = TRUE;
 
     free(chunk.data);
 
-    LOG("WAV loaded: %u samples (%.2f seconds at %d Hz)\n",
-        num_samples, (float)num_samples / hdr->sample_rate, hdr->sample_rate);
+    LOG("WAV loaded: %u samples (%.2f seconds at %u Hz)\n",
+        num_samples, (float)num_samples / wav_info.sample_rate, wav_info.sample_rate);
 
     ACAP_STATUS_SetNumber("output", "size", num_samples);
     ACAP_STATUS_SetString("output", "status", "WAV file loaded, ready for playback");
