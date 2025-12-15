@@ -1,1 +1,9 @@
-[]
+[
+	{
+		"id": "state",
+		"name": "Wakeword: Speak",
+		"state": true,
+		"show": true,
+		"data": []
+	}
+]
