@@ -109,6 +109,14 @@ Settings_Updated_Callback( const char* service, cJSON* data) {
 		    whisper_port && cJSON_IsNumber(whisper_port) &&
 		    language && cJSON_IsString(language)) {
 
+			// Check if Wyoming server address is not empty
+			if (strlen(wyoming_ip->valuestring) == 0) {
+				LOG_WARN("Wyoming server address is empty\n");
+				ACAP_STATUS_SetString("wyoming", "piper", "not configured");
+				ACAP_STATUS_SetString("wyoming", "whisper", "not configured");
+				return;
+			}
+
 			// Disconnect existing connections
 			LOG("Disconnecting old Wyoming connections before applying new settings...\n");
 			wyoming_disconnect(WYOMING_SERVICE_PIPER);
@@ -120,6 +128,8 @@ Settings_Updated_Callback( const char* service, cJSON* data) {
 			                     whisper_port->valueint,
 			                     language->valuestring) == 0) {
 				LOG("Wyoming settings updated successfully\n");
+				ACAP_STATUS_SetString("wyoming", "piper", "configured");
+				ACAP_STATUS_SetString("wyoming", "whisper", "configured");
 			} else {
 				LOG_WARN("Failed to apply Wyoming settings\n");
 			}
@@ -1624,16 +1634,19 @@ int main(void) {
             int whisper_port = cJSON_GetObjectItem(settings, "whisper") ?
                               cJSON_GetObjectItem(settings, "whisper")->valueint : 0;
             const char* language = cJSON_GetObjectItem(settings, "language") ?
-                                  cJSON_GetObjectItem(settings, "language")->valuestring : "sv";
+                                  cJSON_GetObjectItem(settings, "language")->valuestring : "en";
 
-            if (wyoming_server && piper_port && whisper_port) {
+            if (wyoming_server && strlen(wyoming_server) > 0 && piper_port && whisper_port) {
                 LOG("Configuring Wyoming: server=%s piper=%d whisper=%d lang=%s\n",
                     wyoming_server, piper_port, whisper_port, language);
                 wyoming_configure(wyoming_server, piper_port, whisper_port, language);
                 ACAP_STATUS_SetString("wyoming", "piper", "configured");
                 ACAP_STATUS_SetString("wyoming", "whisper", "configured");
             } else {
-                LOG_WARN("Wyoming settings incomplete in settings.json\n");
+                LOG_WARN("Wyoming settings incomplete in settings.json (server='%s', piper=%d, whisper=%d)\n",
+                         wyoming_server ? wyoming_server : "NULL", piper_port, whisper_port);
+                ACAP_STATUS_SetString("wyoming", "piper", "not configured");
+                ACAP_STATUS_SetString("wyoming", "whisper", "not configured");
             }
         }
     } else {

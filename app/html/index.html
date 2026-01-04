@@ -226,8 +226,8 @@
                                 <div class="mb-3">
                                     <label for="language" class="form-label">Language</label>
                                     <select class="form-select" id="language">
+                                        <option value="en" selected>English (en)</option>
                                         <option value="sv">Swedish (sv)</option>
-                                        <option value="en">English (en)</option>
                                         <option value="no">Norwegian (no)</option>
                                         <option value="da">Danish (da)</option>
                                         <option value="de">German (de)</option>
@@ -301,7 +301,7 @@
                         <div class="card-body">
                             <div class="mb-3">
                                 <label for="tts-text" class="form-label">Enter Text to Speak</label>
-                                <textarea class="form-control" id="tts-text" rows="3" placeholder="Enter text in Swedish...">Hej, det här är ett test av text-till-tal systemet.</textarea>
+                                <textarea class="form-control" id="tts-text" rows="3" placeholder="Enter text...">Hello, this is a test of the text-to-speech system.</textarea>
                             </div>
                             <button type="button" class="btn btn-primary" onclick="testTTS()">
                                 <i class="bi bi-volume-up-fill"></i> Speak Text
@@ -352,7 +352,12 @@ $(document).ready(function() {
                 $('#wyoming-server').val(app.settings.wyoming || '');
                 $('#piper-port').val(app.settings.piper || 10200);
                 $('#whisper-port').val(app.settings.whisper || 10300);
-                $('#language').val(app.settings.language || 'sv');
+                $('#language').val(app.settings.language || 'en');
+
+                // Show warning if Wyoming server is not configured
+                if (!app.settings.wyoming || app.settings.wyoming.trim() === '') {
+                    showAlert('warning', 'Please configure the Wyoming server address to use voice features.');
+                }
             }
         },
         error: function(response) {
@@ -369,10 +374,31 @@ $(document).ready(function() {
 $('#wyoming-config-form').submit(function(e) {
     e.preventDefault();
 
+    const wyomingServer = $('#wyoming-server').val().trim();
+    const piperPort = parseInt($('#piper-port').val());
+    const whisperPort = parseInt($('#whisper-port').val());
+
+    // Validate Wyoming server address
+    if (!wyomingServer) {
+        showAlert('danger', 'Wyoming server address cannot be empty. Please enter a valid IP address.');
+        return;
+    }
+
+    // Validate ports
+    if (isNaN(piperPort) || piperPort < 1 || piperPort > 65535) {
+        showAlert('danger', 'Piper port must be a valid port number (1-65535).');
+        return;
+    }
+
+    if (isNaN(whisperPort) || whisperPort < 1 || whisperPort > 65535) {
+        showAlert('danger', 'Whisper port must be a valid port number (1-65535).');
+        return;
+    }
+
     const settings = {
-        wyoming: $('#wyoming-server').val(),
-        piper: parseInt($('#piper-port').val()),
-        whisper: parseInt($('#whisper-port').val()),
+        wyoming: wyomingServer,
+        piper: piperPort,
+        whisper: whisperPort,
         language: $('#language').val()
     };
 
@@ -382,7 +408,7 @@ $('#wyoming-config-form').submit(function(e) {
         contentType: 'application/json',
         data: JSON.stringify(settings),
         success: function() {
-            showAlert('success', 'Wyoming configuration saved successfully!');
+            showAlert('success', 'Wyoming configuration saved successfully! The services will attempt to connect.');
             updateStatus(); // Refresh status
         },
         error: function(xhr) {
@@ -412,6 +438,8 @@ function updateStatus() {
                 updateStatusItem('status-piper', 'ok', 'Connected');
             } else if (piperStatus === 'configured') {
                 updateStatusItem('status-piper', 'warning', 'Configured');
+            } else if (piperStatus === 'not configured') {
+                updateStatusItem('status-piper', 'inactive', 'Not Configured');
             } else {
                 updateStatusItem('status-piper', 'error', piperStatus);
             }
@@ -422,6 +450,8 @@ function updateStatus() {
                 updateStatusItem('status-whisper', 'ok', 'Connected');
             } else if (whisperStatus === 'configured') {
                 updateStatusItem('status-whisper', 'warning', 'Configured');
+            } else if (whisperStatus === 'not configured') {
+                updateStatusItem('status-whisper', 'inactive', 'Not Configured');
             } else {
                 updateStatusItem('status-whisper', 'error', whisperStatus);
             }
@@ -500,6 +530,13 @@ function testTTS() {
     const text = $('#tts-text').val().trim();
     if (!text) {
         showAlert('warning', 'Please enter text to speak');
+        return;
+    }
+
+    // Check if Wyoming server is configured
+    const wyomingServer = $('#wyoming-server').val().trim();
+    if (!wyomingServer) {
+        $('#tts-status').html('<div class="alert alert-warning">Please configure the Wyoming server address first.</div>');
         return;
     }
 
