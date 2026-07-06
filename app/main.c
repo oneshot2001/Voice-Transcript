@@ -139,6 +139,28 @@ Settings_Updated_Callback( const char* service, cJSON* data) {
 	}
 }
 
+// =============================================================================
+// LED STATE CONTROL
+// =============================================================================
+
+static void
+set_led_state(const char* profile, const char* method) {
+	char body[256];
+	snprintf(body, sizeof(body),
+		"{\"apiVersion\":\"1.0\",\"method\":\"%s\",\"params\":{\"profile\":\"%s\"}}",
+		method, profile);
+
+	char* response = ACAP_VAPIX_Post("axis-cgi/siren_and_light.cgi", body);
+	if (response) {
+		LOG_TRACE("LED set to profile: %s (method: %s)\n", profile, method);
+		free(response);
+	}
+}
+
+// =============================================================================
+// AUDIO ERROR HANDLING
+// =============================================================================
+
 void
 audio_error_callback(const GError *error, gpointer userdata) {
     (void)userdata;
@@ -196,6 +218,9 @@ wyoming_state_callback(WyomingServiceType service, WyomingConnectionState state,
 void
 wyoming_transcript_callback(const char* text) {
     LOG("Wyoming STT: Received transcription: %s\n", text);
+
+    // LED: Back to idle after STT transcription
+    set_led_state("LiveStream", "start");
 
     // Update status
     ACAP_STATUS_SetString("stt", "status", "Transcription complete");
@@ -485,6 +510,9 @@ playback_complete_idle(gpointer user_data) {
     LOG("State cleared: active=%d, stream=%p, ready for next playback\n",
         va_state.output.active, (void*)va_state.output.stream);
 
+    // LED: Back to idle after playback complete
+    set_led_state("LiveStream", "start");
+
     // Signal waiting HTTP handler that playback is complete
     g_mutex_lock(&va_state.playback_mutex);
     va_state.playback_complete = TRUE;
@@ -746,6 +774,9 @@ start_playback_idle(gpointer user_data) {
     ACAP_STATUS_SetBool("output", "state", 1);
     ACAP_STATUS_SetString("output", "status", "Playing audio...");
     LOG("Playback stream started successfully\n");
+
+    // LED: Speaking/playing audio
+    set_led_state("Complete", "start");
 
     return G_SOURCE_REMOVE;
 }
@@ -1009,6 +1040,9 @@ HTTP_Endpoint_speak(const ACAP_HTTP_Response response, const ACAP_HTTP_Request r
         return;
     }
 
+    // LED: Processing TTS request
+    set_led_state("Processing", "start");
+
     cJSON_Delete(body);
 
     // Response will be "accepted" - audio will play when ready
@@ -1143,6 +1177,9 @@ void start_recording() {
     ACAP_STATUS_SetNumber("stt", "samples", 0);
     ACAP_STATUS_SetString("stt", "status", "Recording started");
 
+    // LED: Listening/recording audio
+    set_led_state("Listen", "start");
+
     // Delay stream start by 100ms to allow main loop to stabilize
     // This prevents crashes when MQTT retained messages trigger recording during initialization
     g_timeout_add(100, delayed_start_recording_callback, NULL);
@@ -1272,6 +1309,8 @@ void stop_recording() {
         ACAP_STATUS_SetString("stt", "status", "Failed to send audio to Whisper");
     } else {
         LOG("STT: Audio sent to Whisper, waiting for transcription\n");
+        // LED: Processing STT transcription
+        set_led_state("Processing", "start");
     }
 
     free(wav_data);
@@ -1652,6 +1691,10 @@ int main(void) {
     } else {
         LOG_WARN("Failed to initialize Wyoming client\n");
     }
+
+    // LED: Set initial idle state
+    set_led_state("LiveStream", "start");
+    LOG("LED initialized to idle state\n");
 
     // Setup signal handlers
     GSource *signal_source = g_unix_signal_source_new(SIGTERM);

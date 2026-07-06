@@ -142,6 +142,11 @@ python -m wyoming_faster_whisper \
 
 ## 📝 Version History
 
+### 0.9.5 - January 4, 2026
+- Added LED visual feedback for voice assistant states
+- LED indicates idle (blue), listening (yellow), processing, and speaking states
+- Integrated with Axis device siren_and_light.cgi VAPIX API
+
 ### 0.9.0 - December 11, 2025
 - Initial commit
 
