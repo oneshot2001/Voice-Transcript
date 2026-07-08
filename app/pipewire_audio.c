@@ -5,6 +5,7 @@
  */
 
 #include "pipewire_audio.h"
+#include "cJSON.h"
 #include <syslog.h>
 #include <string.h>
 #include <errno.h>
@@ -39,6 +40,165 @@ typedef struct _PipeWireSource {
     struct pw_loop *loop;
     gpointer userdata;
 } PipeWireSource;
+
+typedef struct {
+    uint32_t id;
+    PWAudioStreamType type;
+    char name[64];
+    char media_class[32];
+    gboolean placeholder;
+} PWAudioNodeEntry;
+
+static GPtrArray *g_node_catalog = NULL;
+static GMutex g_node_catalog_mutex;
+
+static gboolean
+node_name_is_placeholder(const char *name)
+{
+    if (name == NULL) {
+        return TRUE;
+    }
+
+    return g_strrstr_len(name, -1, "dummy") != NULL ||
+        g_strrstr_len(name, -1, "auto_null") != NULL;
+}
+
+static void
+free_node_entry(gpointer data)
+{
+    g_free(data);
+}
+
+static void
+ensure_node_catalog(void)
+{
+    g_mutex_lock(&g_node_catalog_mutex);
+    if (g_node_catalog == NULL) {
+        g_node_catalog = g_ptr_array_new_with_free_func(free_node_entry);
+    }
+    g_mutex_unlock(&g_node_catalog_mutex);
+}
+
+static void
+catalog_upsert_node(PWAudioStreamType type,
+                    uint32_t id,
+                    const char *name,
+                    const char *media_class)
+{
+    if (name == NULL || media_class == NULL) {
+        return;
+    }
+
+    ensure_node_catalog();
+
+    g_mutex_lock(&g_node_catalog_mutex);
+    for (guint i = 0; i < g_node_catalog->len; i++) {
+        PWAudioNodeEntry *entry = g_ptr_array_index(g_node_catalog, i);
+        if (entry->id == id) {
+            entry->type = type;
+            g_strlcpy(entry->name, name, sizeof(entry->name));
+            g_strlcpy(entry->media_class, media_class, sizeof(entry->media_class));
+            entry->placeholder = node_name_is_placeholder(name);
+            g_mutex_unlock(&g_node_catalog_mutex);
+            return;
+        }
+    }
+
+    PWAudioNodeEntry *entry = g_new0(PWAudioNodeEntry, 1);
+    entry->id = id;
+    entry->type = type;
+    g_strlcpy(entry->name, name, sizeof(entry->name));
+    g_strlcpy(entry->media_class, media_class, sizeof(entry->media_class));
+    entry->placeholder = node_name_is_placeholder(name);
+    g_ptr_array_add(g_node_catalog, entry);
+    g_mutex_unlock(&g_node_catalog_mutex);
+}
+
+static void
+catalog_remove_node(uint32_t id)
+{
+    if (g_node_catalog == NULL) {
+        return;
+    }
+
+    g_mutex_lock(&g_node_catalog_mutex);
+    for (guint i = 0; i < g_node_catalog->len; i++) {
+        PWAudioNodeEntry *entry = g_ptr_array_index(g_node_catalog, i);
+        if (entry->id == id) {
+            g_ptr_array_remove_index(g_node_catalog, i);
+            break;
+        }
+    }
+    g_mutex_unlock(&g_node_catalog_mutex);
+}
+
+static gboolean
+node_name_has_role(const char *name, const char *role)
+{
+    if (name == NULL || role == NULL) {
+        return FALSE;
+    }
+
+    return g_strrstr_len(name, -1, role) != NULL;
+}
+
+static gboolean
+node_name_matches_wanted(const char *wanted_node_name, const char *actual_node_name)
+{
+    if (wanted_node_name == NULL || actual_node_name == NULL) {
+        return FALSE;
+    }
+
+    if (g_strcmp0(actual_node_name, wanted_node_name) == 0) {
+        return TRUE;
+    }
+
+    // Allow canonical processed input alias to match device-specific full node names.
+    if (g_strcmp0(wanted_node_name, "AudioDevice0Input0") == 0) {
+        return g_strrstr_len(actual_node_name, -1, "Input0") != NULL &&
+            g_strrstr_len(actual_node_name, -1, "Unprocessed") == NULL;
+    }
+
+    return FALSE;
+}
+
+static gboolean
+node_matches_stream(PWAudioStreamType stream_type,
+                    const char *wanted_node_name,
+                    const char *media_class,
+                    const char *name,
+                    gboolean *exact_match)
+{
+    gboolean auto_select = (wanted_node_name == NULL || wanted_node_name[0] == '\0' || g_strcmp0(wanted_node_name, "auto") == 0);
+
+    *exact_match = (!auto_select && node_name_matches_wanted(wanted_node_name, name));
+    if (*exact_match) {
+        return TRUE;
+    }
+
+    if (!auto_select) {
+        return FALSE;
+    }
+
+    if (stream_type == PW_AUDIO_CAPTURE_STREAM) {
+        if (node_name_is_placeholder(name)) {
+            return FALSE;
+        }
+        if (g_strcmp0(media_class, "Audio/Source") == 0) {
+            return TRUE;
+        }
+        if (node_name_has_role(name, "Input")) {
+            return TRUE;
+        }
+        return FALSE;
+    }
+
+    if (g_strcmp0(media_class, "Audio/Sink") == 0) {
+        return TRUE;
+    }
+
+    return node_name_has_role(name, "Output");
+}
 
 struct stream_data {
     struct spa_list link;
@@ -267,6 +427,7 @@ pw_registry_event_global(void *userdata,
 {
     PWAudio *pa = (PWAudio *) userdata;
     const char *errmsg = NULL;
+    gboolean exact_match = FALSE;
 
     LOG_TRACE("pw_registry_event_global: type=%s, id=%u\n", type, id);
 
@@ -274,6 +435,17 @@ pw_registry_event_global(void *userdata,
     if (spa_streq(type, PW_TYPE_INTERFACE_Node)) {
         const char *media_class = spa_dict_lookup(props, PW_KEY_MEDIA_CLASS);
         const char *name = spa_dict_lookup(props, PW_KEY_NODE_NAME);
+        PWAudioStreamType node_type = PW_AUDIO_NO_STREAM;
+
+        if (g_strcmp0(media_class, "Audio/Source") == 0 || node_name_has_role(name, "Input")) {
+            node_type = PW_AUDIO_CAPTURE_STREAM;
+        } else if (g_strcmp0(media_class, "Audio/Sink") == 0 || node_name_has_role(name, "Output")) {
+            node_type = PW_AUDIO_PLAYBACK_STREAM;
+        }
+
+        if (node_type != PW_AUDIO_NO_STREAM) {
+            catalog_upsert_node(node_type, id, name, media_class);
+        }
 
         // ALWAYS log all nodes to see what's available
         LOG_TRACE("pw_registry_event_global: Found Node: media_class=%s, name=%s (looking for %s, detected=%d)\n",
@@ -287,8 +459,16 @@ pw_registry_event_global(void *userdata,
             return;  // Already connected to a node
         }
 
-        if (g_strcmp0(name, pa->wanted_node_name) != 0) {
+        if (!node_matches_stream(pa->type, pa->wanted_node_name, media_class, name, &exact_match)) {
             return;  // Name doesn't match what we're looking for
+        }
+
+        if (!exact_match) {
+            LOG_WARN("PipeWire: node '%s' not found, using compatible %s node '%s' (%s)\n",
+                pa->wanted_node_name,
+                pa->type == PW_AUDIO_CAPTURE_STREAM ? "capture" : "playback",
+                name ? name : "NULL",
+                media_class ? media_class : "unknown");
         }
 
         uint8_t buf[1024];
@@ -298,8 +478,6 @@ pw_registry_event_global(void *userdata,
         struct stream_data *stream_data;
         int res;
         enum pw_direction direction;
-
-        pa->node_detected = TRUE;
 
         LOG_TRACE("*** FOUND AUDIO NODE! media_class=%s, name=%s, id=%u\n",
             media_class ? media_class : "NULL", name, id);
@@ -385,6 +563,7 @@ pw_registry_event_global(void *userdata,
         }
 
         spa_list_append(&pa->streams, &stream_data->link);
+        pa->node_detected = TRUE;
     }
 
     return;
@@ -409,6 +588,7 @@ pw_registry_event_global_remove(void *data, uint32_t id)
     struct stream_data *stream_data;
 
     LOG_WARN("Removed pipewire object with id %u\n", id);
+    catalog_remove_node(id);
 
     spa_list_for_each(stream_data, &pa->streams, link) {
         if (stream_data->node_id == id) {
@@ -435,6 +615,7 @@ audio_stream_start(PWAudioStreamType type,
                   enum spa_audio_format format,
                   guint32 samplerate,
                   PWAudioChannel channels,
+                  const char *node_name,
                   PWAudioOnError on_error,
                   gpointer userdata)
 {
@@ -467,7 +648,7 @@ audio_stream_start(PWAudioStreamType type,
     pa->on_error_userdata = userdata;
 
     if (type == PW_AUDIO_CAPTURE_STREAM) {
-        pa->wanted_node_name = DEFAULT_INPUT_NODE;
+        pa->wanted_node_name = (node_name && node_name[0]) ? g_strdup(node_name) : DEFAULT_INPUT_NODE;
     } else {
         pa->wanted_node_name = DEFAULT_OUTPUT_NODE;
     }
@@ -485,6 +666,12 @@ audio_stream_start(PWAudioStreamType type,
         return NULL;
     }
     LOG_TRACE("audio_stream_start: PipeWire loop created successfully\n");
+
+    /* pw_loop_iterate() requires the loop to have been entered at least once
+     * (newer PipeWire versions assert impl->enter_count > 0). This is just
+     * thread registration bookkeeping, not a blocking call like pw_loop_run(),
+     * so it's safe to pair with the GSource-based dispatch below. */
+    pw_loop_enter(pa->pwloop);
 
     /* Wrap PipeWire loop in GMainLoop */
     LOG_TRACE("audio_stream_start: Creating GSource wrapper\n");
@@ -508,6 +695,7 @@ audio_stream_start(PWAudioStreamType type,
     if (pa->context == NULL) {
         LOG_WARN("audio_stream_start: FAILED to create pw_context\n");
         g_source_destroy(pa->gsource);
+        pw_loop_leave(pa->pwloop);
         pw_loop_destroy(pa->pwloop);
         g_free(pa);
         G_LOCK(audio);
@@ -523,6 +711,7 @@ audio_stream_start(PWAudioStreamType type,
         LOG_WARN("audio_stream_start: FAILED to connect to pw_core\n");
         g_source_destroy(pa->gsource);
         pw_context_destroy(pa->context);
+        pw_loop_leave(pa->pwloop);
         pw_loop_destroy(pa->pwloop);
         g_free(pa);
         G_LOCK(audio);
@@ -539,6 +728,7 @@ audio_stream_start(PWAudioStreamType type,
         g_source_destroy(pa->gsource);
         pw_core_disconnect(pa->core);
         pw_context_destroy(pa->context);
+        pw_loop_leave(pa->pwloop);
         pw_loop_destroy(pa->pwloop);
         g_free(pa);
         G_LOCK(audio);
@@ -591,6 +781,7 @@ PWAudio *
 pw_audio_capture_start(enum spa_audio_format format,
                       guint32 samplerate,
                       PWAudioChannel channels,
+                      const char *node_name,
                       PWAudioOnError on_error,
                       gpointer userdata)
 {
@@ -603,6 +794,7 @@ pw_audio_capture_start(enum spa_audio_format format,
                              format,
                              samplerate,
                              channels,
+                             node_name,
                              on_error,
                              userdata);
 }
@@ -618,6 +810,7 @@ pw_audio_playback_start(enum spa_audio_format format,
                              format,
                              samplerate,  /* Use specified sample rate, or 0 for device native */
                              channels,
+                             NULL,
                              on_error,
                              userdata);
 }
@@ -644,9 +837,6 @@ pw_audio_stop(PWAudio *pa)
         return;
     }
 
-    /* NOTE: We do NOT call pw_loop_leave() because we never called
-     * pw_loop_enter(). The loop is managed by GLib main loop. */
-
     /* CRITICAL: Destroy the GSource FIRST before destroying the PipeWire loop.
      * The GSource is still attached to the main context and polling the loop's
      * file descriptor. If we destroy the loop first, the GSource will try to
@@ -672,8 +862,13 @@ pw_audio_stop(PWAudio *pa)
 
     pw_core_disconnect(pa->core);
     pw_context_destroy(pa->context);
+    pw_loop_leave(pa->pwloop);
     pw_loop_destroy(pa->pwloop);
     pw_deinit();
+
+    if (pa->type == PW_AUDIO_CAPTURE_STREAM && pa->wanted_node_name != DEFAULT_INPUT_NODE) {
+        g_free((gpointer)pa->wanted_node_name);
+    }
 
     g_free(pa);
 
@@ -736,4 +931,44 @@ pw_audio_enable_debug(PWAudio *stream, gboolean enable)
     G_LOCK(audio);
     stream->debug = enable;
     G_UNLOCK(audio);
+}
+
+cJSON *
+pw_audio_list_input_nodes(void)
+{
+    cJSON *nodes = cJSON_CreateArray();
+
+    ensure_node_catalog();
+
+    g_mutex_lock(&g_node_catalog_mutex);
+    for (guint i = 0; i < g_node_catalog->len; i++) {
+        PWAudioNodeEntry *entry = g_ptr_array_index(g_node_catalog, i);
+        if (entry->type != PW_AUDIO_CAPTURE_STREAM) {
+            continue;
+        }
+
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "name", entry->name);
+        cJSON_AddStringToObject(item, "media_class", entry->media_class);
+        cJSON_AddBoolToObject(item, "placeholder", entry->placeholder);
+        cJSON_AddItemToArray(nodes, item);
+    }
+    g_mutex_unlock(&g_node_catalog_mutex);
+
+    return nodes;
+}
+
+const char *
+pw_audio_stream_get_node_name(PWAudio *stream)
+{
+    if (stream == NULL) {
+        return NULL;
+    }
+
+    struct stream_data *stream_data;
+    spa_list_for_each(stream_data, &stream->streams, link) {
+        return stream_data->node_name;
+    }
+
+    return NULL;
 }

@@ -16,6 +16,8 @@
 #include <spa/param/audio/format-utils.h>
 #pragma GCC diagnostic pop
 
+typedef struct cJSON cJSON;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -85,6 +87,7 @@ PWAudio *
 pw_audio_capture_start(enum spa_audio_format format,
                        guint32 samplerate,
                        PWAudioChannel channels,
+                       const char *node_name,
                        PWAudioOnError on_error,
                        gpointer userdata);
 
@@ -160,6 +163,12 @@ pw_audio_stream_get_channels(PWAudio *stream);
  */
 void
 pw_audio_enable_debug(PWAudio *stream, gboolean enable);
+
+cJSON *
+pw_audio_list_input_nodes(void);
+
+const char *
+pw_audio_stream_get_node_name(PWAudio *stream);
 
 #ifdef __cplusplus
 }

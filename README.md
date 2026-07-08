@@ -1,157 +1,224 @@
-# Voice Assistant ACAP
+# Voice Transcripts ACAP (v1.0.0)
 
-A voice assistant application for Axis network speaker devices, featuring Wyoming protocol integration for Text-to-Speech (TTS) and Speech-to-text (STT).
+Voice Transcripts is an Axis ACAP for continuous speech transcription on device microphones.
 
-## Overview
+It supports two user-selectable operating modes:
 
-This ACAP (Axis Camera Application Platform) application transforms Axis network speakers into intelligent voice assistants. Built on PipeWire for audio I/O, the application provides direct TCP integration with Wyoming protocol servers (Piper for TTS, Whisper for ASR) and supports concurrent audio streams for simultaneous listening and speaking.
+- Continuous transcription: quality-focused, longer utterances, sentence/pause splitting.
+- Voice commands: speed-focused, keyword-gated, fuzzy keyword matching.
 
-## 🚀 Key Features
+## What It Does
 
-✅ **Wyoming Protocol TTS Integration**
-- Direct TCP connection to Wyoming Piper server (no HTTP intermediary)
-- Complex JSON + binary protocol parsing with state machine
-- Real-time WAV file construction from PCM audio chunks
-- Multi-language TTS synthesis (English by default)
-- Configurable server settings via HTTP API and web interface
+- Captures audio from the processed Axis input path (`AudioDevice0Input0`).
+- Runs VAD + utterance segmentation continuously.
+- Uses either:
+  - internal `whisper.cpp` inference on device, or
+  - external Wyoming Whisper server.
+- Stores transcript history for the web UI/API.
+- Publishes transcript events over MQTT.
 
-✅ **Audio Playback**
-- Download and play WAV files from URLs
-- PCM 16-bit to F32 sample conversion
-- PipeWire integration for speaker output
-- Support for any sample rate (automatic resampling)
+## Quick Start
 
-✅ **HTTP API**
-- `/local/voice/speak` - Text-to-speech synthesis
-- `/local/voice/playback` - Play WAV from URL
-- `/local/voice/listen_start` - Start STT listening
-- `/local/voice/listen_stop` - Stop STT listening and get transcription
-- `/local/voice/transcription` - Get last transcription
-- `/local/voice/status` - Stream status monitoring
-- `/local/voice/settings` - Wyoming server configuration
+### 1. Build
 
-✅ **MQTT Topics** (auto-configured with device serial)
-- Subscribe: `voice/speak/{SERIAL}`, `voice/playback/{SERIAL}`, `voice/listen/start/{SERIAL}`, `voice/listen/stop/{SERIAL}`
-- Publish: `voice/connect/{SERIAL}`, `voice/transcript/{SERIAL}`
+```bash
+./build.sh
+```
 
+Produces an `.eap` package in the repository root.
 
+### 2. Install
 
-## 📖 Usage
+```bash
+./install.sh <device-host> <user> <password> aarch64
+```
 
-### Initial Configuration
+### 3. Configure
 
-**IMPORTANT:** Before using voice features, you must configure the Wyoming server address through the web interface:
+Open:
 
-1. Open the web interface: `http://speaker.internal/local/voice/`
-2. Navigate to "Wyoming Protocol Configuration"
-3. Enter your Wyoming server IP address (e.g., `10.13.8.2`)
-4. Set Piper port (default: `10200`) and Whisper port (default: `10300`)
-5. Select language (default: `en`)
-6. Click "Save Wyoming Configuration"
+```text
+http://<device-host>/local/voice/
+```
 
-Default settings in `app/settings/settings.json`:
+Then set:
+
+- STT backend (`internal` or `external`)
+- Language
+- Sensitivity / silence timeout / min speech / max utterance
+- Use case (`continuous` or `voice_commands`)
+- Command keywords (for voice command mode)
+- MQTT broker settings
+
+## Use Cases
+
+### Continuous transcription
+
+Optimized for transcript quality and long-form capture.
+
+Behavior:
+
+- Splits transcript output on sentence/pause boundaries when possible.
+- Ignores transcript fragments shorter than 3 words.
+- Publishes accepted transcripts to MQTT topic `voice/transcription`.
+
+### Voice commands
+
+Optimized for speed and command intent extraction.
+
+Behavior:
+
+- Expects short utterances (typically 3-10 words).
+- Ignores utterances shorter than 3 words.
+- Requires at least one keyword fuzzy match.
+- If no keyword match:
+  - transcript is still shown in UI history,
+  - marked as `Ignored`,
+  - not published to MQTT.
+- Publishes accepted command transcripts to MQTT topic `voice/command`.
+
+Fuzzy keyword matching handles:
+
+- exact matches,
+- common singular/plural forms,
+- minor edit-distance transcription errors.
+
+## HTTP API
+
+All endpoints are under:
+
+```text
+/local/voice/
+```
+
+### GET `/app`
+Returns app metadata, runtime status snapshot, and settings.
+
+### GET `/status`
+Returns live runtime status keys used by UI.
+
+### GET `/settings`
+Returns current settings JSON.
+
+### POST `/settings`
+Applies settings immediately.
+
+Example payload:
+
 ```json
 {
-    "wyoming": "",
-    "piper": 10200,
-    "whisper": 10300,
-    "language": "en"
+  "transcription_use_case": "voice_commands",
+  "command_keywords": "light,lights,garage,gate",
+  "stt_mode": "external",
+  "wyoming_host": "bart.internal",
+  "wyoming_whisper_port": 10300,
+  "enabled": true,
+  "input_node": "AudioDevice0Input0",
+  "language": "sv",
+  "translate": false,
+  "sensitivity": "normal",
+  "silence_timeout_ms": 450,
+  "min_speech_ms": 180,
+  "max_utterance_sec": 6,
+  "inference_threads": 3,
+  "max_tokens": 32
 }
 ```
 
-Supported languages: `en` (English), `sv` (Swedish), `no` (Norwegian), `da` (Danish), `de` (German), `fr` (French), `es` (Spanish)
+### GET `/transcripts`
+Returns transcript history (newest first).
 
-### Wyoming Server Setup
+Example entry:
 
-This application requires Wyoming protocol servers running on your network. You can run them directly with Python or use Docker containers.
-
-#### Installation
-
-**Install Wyoming Piper (TTS):**
-```bash
-pip install wyoming-piper
+```json
+{
+  "ts": 1783527405123,
+  "utterance_start_ms": 1783527401044,
+  "duration_ms": 4079,
+  "ignored": false,
+  "language": "sv",
+  "text": "turn on the garage lights",
+  "keywords": ["garage", "lights"]
+}
 ```
 
-**Install Wyoming Faster-Whisper (STT):**
-```bash
-pip install wyoming-faster-whisper
+### DELETE `/transcripts`
+Clears transcript history and counters.
+
+### GET/POST `/mqtt`
+Gets or updates MQTT connectivity and payload metadata settings.
+
+## MQTT Integration
+
+`MQTT_Publish_JSON` automatically:
+
+- prepends configured `preTopic` if set,
+- injects `serial`,
+- injects optional `name` and `location` from MQTT settings.
+
+### Published topics
+
+- Continuous mode: `voice/transcription`
+- Voice command mode: `voice/command`
+
+Final broker topic becomes:
+
+- `<preTopic>/voice/transcription` or
+- `<preTopic>/voice/command`
+
+when `preTopic` is configured.
+
+### Transcript payload example
+
+```json
+{
+  "language": "sv",
+  "text": "turn on the garage lights",
+  "timestamp": 1783527401044,
+  "keywords": ["garage", "lights"],
+  "serial": "B8A44F3024BB",
+  "name": "Lobby Hub",
+  "location": "Building A Floor 1"
+}
 ```
 
-#### Running Piper TTS Server
+Field notes:
 
-**English Voice (recommended for default):**
-```bash
-python -m wyoming_piper \
-  --uri tcp://0.0.0.0:10200 \
-  --data-dir ~/assistant/wyoming/piper \
-  --voice en_US-lessac-medium
-```
+- `timestamp` is epoch milliseconds when utterance start was detected.
+- `keywords` contains detected keyword matches. It can be empty in continuous mode.
 
-**Swedish Voice:**
-```bash
-python -m wyoming_piper \
-  --uri tcp://0.0.0.0:10200 \
-  --data-dir ~/assistant/wyoming/piper \
-  --voice sv_SE-nst-medium
-```
+## External Wyoming Backend
 
-Available voices: https://github.com/rhasspy/piper/blob/master/VOICES.md
-**Note:** Match the voice language with the language setting in your ACAP configuration.
+If `stt_mode=external`, configure:
 
-#### Running Faster-Whisper STT Server
+- `wyoming_host`
+- `wyoming_whisper_port`
 
-**English (recommended for default, with CUDA acceleration):**
-```bash
-python -m wyoming_faster_whisper \
-  --uri tcp://0.0.0.0:10300 \
-  --data-dir ~/assistant/wyoming/whisper \
-  --model large-v3 \
-  --language en \
-  --device cuda \
-  --compute-type float16 \
-  --beam-size 1
-```
+Recommended service package versions:
 
-**Swedish (with CUDA acceleration):**
-```bash
-python -m wyoming_faster_whisper \
-  --uri tcp://0.0.0.0:10300 \
-  --data-dir ~/assistant/wyoming/whisper \
-  --model large-v3 \
-  --language sv \
-  --device cuda \
-  --compute-type float16 \
-  --beam-size 1
-```
+- `wyoming-faster-whisper>=3.3.1`
+- `wyoming-piper>=2.2.2` (if TTS services are also running on same host)
 
-**CPU-only (no CUDA):**
-```bash
-python -m wyoming_faster_whisper \
-  --uri tcp://0.0.0.0:10300 \
-  --data-dir ~/assistant/wyoming/whisper \
-  --model base \
-  --language en \
-  --device cpu
-```
+## Continuous Listening Toggle
 
-**Parameters:**
-- `--model`: `tiny`, `base`, `small`, `medium`, `large-v3` (larger = more accurate, slower)
-- `--device`: `cuda` (GPU) or `cpu`
-- `--compute-type`: `float16` (faster), `int8` (fastest), `float32` (most accurate)
-- `--beam-size`: Lower = faster, Higher = more accurate (1-5 recommended)
+`enabled` ("Continuous listening enabled" in UI):
 
-## 📝 Version History
+- `true`: continuously monitors microphone and processes utterances.
+- `false`: keeps app running but drops utterances (no transcription output).
 
-### 0.9.5 - January 4, 2026
-- Added LED visual feedback for voice assistant states
-- LED indicates idle (blue), listening (yellow), processing, and speaking states
-- Integrated with Axis device siren_and_light.cgi VAPIX API
+## Architecture, Build, and Extension Guide
 
-### 0.9.0 - December 11, 2025
-- Initial commit
+For implementation details, architecture, extension points, and contributor workflow, see:
 
-## 👤 Author
+- [AGENT.md](AGENT.md)
 
-**Fred Juhlin**
-Website: https://pandosme.github.io
+## Support and Contributions
 
+- Buy me a coffee: https://www.buymeacoffee.com/fredjuhlinl
+- Pull requests are highly appreciated.
+
+## License
+
+MIT with third-party notices.
+
+- [LICENSE](LICENSE)

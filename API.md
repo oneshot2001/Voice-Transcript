@@ -328,7 +328,7 @@ curl -X POST http://192.168.1.100/local/voice/settings \
         "friendlyName": "Voice",
         "appName": "voice",
         "vendor": "Fred Juhlin",
-        "version": "0.9.5"
+        "version": "1.0.0"
       }
     }
   },
@@ -700,6 +700,7 @@ script:
 
 ## Version History
 
+**1.0.0** - Always trigger STT on the WakeWord ACAP's wake word event (ignored while busy); GUI restyled to match WakeWord; LICENSE attributions updated
 **0.9.5** - Added LED visual feedback
 **0.9.0** - Initial release with Wyoming protocol integration
 
