@@ -1,6 +1,12 @@
+Voice ACAP License
+==================
+
+Project License
+---------------
+
 MIT License
 
-Copyright (c) 2025 Fred Juhlin <fred.juhlin@gmail.com>
+Copyright (c) 2025-2026 Fred Juhlin <fred.juhlin@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +25,55 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Third-Party Notices
+--------------------
+
+This repository and the ACAP package include or reference third-party software
+and libraries. Their licenses remain with their respective owners.
+
+- cJSON (`app/cJSON.c`, `app/cJSON.h`)
+	- Copyright (c) 2009-2017 Dave Gamble and cJSON contributors
+	- License: MIT
+
+- whisper.cpp and ggml (`whisper/lib/*`, `whisper/include/*`, `app/whisper_stt.c` integration)
+	- Copyright (c) whisper.cpp authors
+	- License: MIT
+	- Source: https://github.com/ggml-org/whisper.cpp
+
+- Whisper model files bundled in package (`ggml-base-q5_1.bin`, `ggml-tiny-q5_1.bin`)
+	- Derived from OpenAI Whisper model weights (converted for whisper.cpp)
+	- Original project: https://github.com/openai/whisper
+	- See upstream model terms in OpenAI Whisper repository
+
+- Eclipse Paho MQTT C Client headers (`app/MQTTAsync.h`, `app/MQTTClient.h`,
+  `app/MQTTClientPersistence.h`, `app/MQTTExportDeclarations.h`,
+  `app/MQTTProperties.h`, `app/MQTTReasonCodes.h`, `app/MQTTSubscribeOpts.h`)
+	- Copyright (c) 2009, 2020 IBM Corp. and others
+	- License: Eclipse Public License v2.0 / Eclipse Distribution License v1.0
+	- Source: https://github.com/eclipse/paho.mqtt.c
+
+- PipeWire audio wrapper (`app/pipewire_audio.c`, `app/pipewire_audio.h`)
+	- Simplified version based on the Axis SSW Audio API
+	- Copyright (C) Axis Communications AB
+
+- Bootstrap (`app/html/css/bootstrap.min.css`, `app/html/js/bootstrap.bundle.min.js`)
+	- Copyright 2011-2021 The Bootstrap Authors
+	- Copyright 2011-2021 Twitter, Inc.
+	- License: MIT
+	- Source: https://getbootstrap.com/
+
+- jQuery (`app/html/js/jquery-3.7.1.min.js`)
+	- Copyright OpenJS Foundation and other contributors
+	- License: MIT
+	- Source: https://jquery.org/license/
+
+- media-stream-player (`app/html/js/media-stream-player.min.js`)
+	- Copyright (c) Axis Communications AB and contributors
+	- License: MIT
+	- Source: https://github.com/AxisCommunications/media-stream-player-js
+
+Eclipse Public License v2.0 / Eclipse Distribution License v1.0 components are
+used under those licenses. The license texts are available at
+https://www.eclipse.org/legal/epl-2.0/ and
+http://www.eclipse.org/org/documents/edl-v10.php.

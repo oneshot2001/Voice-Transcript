@@ -1,254 +1,154 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MQTT Configuration</title>
-    <link rel="stylesheet" href="css/bootstrap.min.css">
-    <link rel="stylesheet" href="css/app.css">
-    <script src="js/jquery-3.7.1.min.js"></script>
-    <script src="js/bootstrap.bundle.min.js"></script>
-    <style>
-        :root {
-            --status-ok: #28a745;
-            --status-warning: #ffc107;
-            --status-error: #dc3545;
-            --status-info: #17a2b8;
-            --status-inactive: #6c757d;
-        }
-
-        body {
-            background-color: #f5f7fa;
-        }
-
-        .card {
-            border: none;
-            box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
-            margin-bottom: 1.5rem;
-            transition: box-shadow 0.3s;
-        }
-
-        .card:hover {
-            box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
-        }
-
-        .card-header {
-            background-color: #fff;
-            border-bottom: 2px solid #e9ecef;
-            font-weight: 600;
-        }
-
-        .status-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        .status-ok { background-color: var(--status-ok); }
-        .status-warning { background-color: var(--status-warning); }
-        .status-error { background-color: var(--status-error); }
-        .status-info { background-color: var(--status-info); }
-        .status-inactive { background-color: var(--status-inactive); }
-
-        .form-label {
-            font-weight: 600;
-            color: #495057;
-            margin-bottom: 0.5rem;
-        }
-
-        .form-control:focus {
-            border-color: #80bdff;
-            box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
-        }
-
-        .btn-save {
-            min-width: 140px;
-        }
-
-        #sidebar-wrapper {
-            min-height: 100vh;
-        }
-
-        .cert-link {
-            display: block;
-            margin-top: 0.5rem;
-            font-size: 0.875rem;
-        }
-
-        .info-text {
-            font-size: 0.9rem;
-            color: #6c757d;
-            line-height: 1.6;
-        }
-
-        .status-display {
-            padding: 1rem;
-            background-color: #f8f9fa;
-            border-radius: 0.25rem;
-            border: 1px solid #dee2e6;
-            display: flex;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-
-        .status-display .status-text {
-            margin-left: 0.5rem;
-            font-weight: 500;
-        }
-    </style>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>MQTT Configuration</title>
+	<link rel="stylesheet" href="css/bootstrap.min.css">
+	<link rel="stylesheet" href="css/app.css">
+	<script src="js/jquery-3.7.1.min.js"></script>
+	<script src="js/bootstrap.bundle.min.js"></script>
+	<script src="js/toast.js"></script>
 </head>
 <body>
 <div class="d-flex" id="wrapper">
-    <!-- Sidebar -->
-    <div class="bg-light border-right" id="sidebar-wrapper">
-        <div class="sidebar-heading">&nbsp;</div>
-        <div class="list-group list-group-flush">
-            <a href="index.html" class="list-group-item list-group-item-action">Voice Assistant</a>
-            <a href="mqtt.html" class="list-group-item list-group-item-action active">MQTT</a>
-            <a href="about.html" class="list-group-item list-group-item-action">About</a>
-        </div>
-    </div>
+	<div class="bg-light border-right" id="sidebar-wrapper">
+		<div class="sidebar-heading">&nbsp;</div>
+		<div class="list-group list-group-flush">
+			<a href="index.html" class="list-group-item list-group-item-action">Transcriptions</a>
+			<a href="config.html" class="list-group-item list-group-item-action">Configuration</a>
+			<a href="mqtt.html" class="list-group-item list-group-item-action active">MQTT</a>
+			<a href="about.html" class="list-group-item list-group-item-action">About</a>
+		</div>
+	</div>
 
-    <div id="page-content-wrapper" class="p-0">
-        <div class="container-fluid p-4">
+	<div id="page-content-wrapper" class="p-0">
+		<div class="container-fluid">
 
-            <!-- Status Dashboard -->
-            <div class="row">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">MQTT Connection Status</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="status-display" id="mqtt-status-display">
-                                <span class="status-indicator status-inactive"></span>
-                                <span class="status-text" id="mqtt_status">Checking...</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+			<!-- MQTT Connection Status -->
+			<div class="row g-3 mb-3">
+				<div class="col-12">
+					<div class="card">
+						<div class="card-header">
+							<h5 class="card-title mb-0">MQTT Connection Status</h5>
+							<span id="mqtt_status" class="badge bg-secondary state-badge">Checking...</span>
+						</div>
+					</div>
+				</div>
+			</div>
 
-            <div class="row">
-                <!-- Left Column: MQTT Connection Settings -->
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">MQTT Broker Configuration</h5>
-                        </div>
-                        <div class="card-body">
-                            <form id="mqtt-config-form">
-                                <div class="mb-3">
-                                    <label for="mqtt_address" class="form-label">Broker Address</label>
-                                    <input id="mqtt_address" type="text" class="form-control" placeholder="mqtt.example.com">
-                                    <small class="form-text text-muted">Hostname or IP address of MQTT broker</small>
-                                </div>
+			<div class="row g-3">
+				<!-- Left Column: MQTT Broker Configuration -->
+				<div class="col-lg-6">
+					<div class="card">
+						<div class="card-header">
+							<h5 class="card-title mb-0">MQTT Broker Configuration</h5>
+						</div>
+						<div class="card-body">
+							<form id="mqtt-config-form">
+								<div class="mb-3">
+									<label for="mqtt_address" class="form-label">Broker Address</label>
+									<input id="mqtt_address" type="text" class="form-control" placeholder="mqtt.example.com">
+									<div class="form-text">Hostname or IP address of MQTT broker</div>
+								</div>
 
-                                <div class="mb-3">
-                                    <label for="mqtt_port" class="form-label">Port</label>
-                                    <input id="mqtt_port" type="number" class="form-control" placeholder="1883">
-                                    <small class="form-text text-muted">Standard: 1883 (no TLS), 8883 (TLS)</small>
-                                </div>
+								<div class="mb-3">
+									<label for="mqtt_port" class="form-label">Port</label>
+									<input id="mqtt_port" type="number" class="form-control" placeholder="1883">
+									<div class="form-text">Standard: 1883 (no TLS), 8883 (TLS)</div>
+								</div>
 
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label for="mqtt_user" class="form-label">Username</label>
-                                        <input type="text" class="form-control" id="mqtt_user" placeholder="username">
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label for="mqtt_password" class="form-label">Password</label>
-                                        <input type="password" class="form-control" id="mqtt_password" placeholder="password">
-                                    </div>
-                                </div>
+								<div class="row">
+									<div class="col-md-6 mb-3">
+										<label for="mqtt_user" class="form-label">Username</label>
+										<input type="text" class="form-control" id="mqtt_user" placeholder="username">
+									</div>
+									<div class="col-md-6 mb-3">
+										<label for="mqtt_password" class="form-label">Password</label>
+										<input type="password" class="form-control" id="mqtt_password" placeholder="password">
+									</div>
+								</div>
 
-                                <div class="mb-3">
-                                    <label for="mqtt_preTopic" class="form-label">Topic Prefix</label>
-                                    <input id="mqtt_preTopic" type="text" class="form-control" placeholder="home/devices">
-                                    <small class="form-text text-muted">Optional prefix for all published topics</small>
-                                </div>
+								<div class="mb-3">
+									<label for="mqtt_preTopic" class="form-label">Topic Prefix</label>
+									<input id="mqtt_preTopic" type="text" class="form-control" placeholder="home/devices">
+									<div class="form-text">Optional prefix for all published topics</div>
+								</div>
 
-                                <div class="mb-3">
-                                    <label for="mqtt_tls" class="form-label">TLS/SSL Configuration</label>
-                                    <select id="mqtt_tls" class="form-select">
-                                        <option value="none">No TLS (unencrypted)</option>
-                                        <option value="verify">TLS with certificate verification</option>
-                                        <option value="noverify">TLS without verification (trust all)</option>
-                                    </select>
-                                    <a href="certificate.html" class="cert-link">Manage TLS certificates</a>
-                                </div>
+								<div class="mb-3">
+									<label for="mqtt_tls" class="form-label">TLS/SSL Configuration</label>
+									<select id="mqtt_tls" class="form-select">
+										<option value="none">No TLS (unencrypted)</option>
+										<option value="verify">TLS with certificate verification</option>
+										<option value="noverify">TLS without verification (trust all)</option>
+									</select>
+									<a href="certificate.html" class="cert-link">Manage TLS certificates</a>
+								</div>
 
-                                <div class="d-grid gap-2">
-                                    <button id="connect" type="button" class="btn btn-primary btn-save">Connect</button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </div>
+								<div class="d-grid gap-2">
+									<button id="connect" type="button" class="btn btn-primary">Connect</button>
+								</div>
+							</form>
+						</div>
+					</div>
+				</div>
 
-                <!-- Right Column: System Payload Properties -->
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">Device Identification</h5>
-                        </div>
-                        <div class="card-body">
-                            <p class="info-text">
-                                These optional properties help identify the device in systems with multiple devices.
-                                They will be included in MQTT message payloads.
-                            </p>
+				<!-- Right Column: Device Identification + Help -->
+				<div class="col-lg-6">
+					<div class="card">
+						<div class="card-header">
+							<h5 class="card-title mb-0">Device Identification</h5>
+						</div>
+						<div class="card-body">
+							<p class="info-text">
+								These optional properties help identify the device in systems with multiple devices.
+								They will be included in MQTT message payloads.
+							</p>
 
-                            <div class="mb-3">
-                                <label for="payload_name" class="form-label">Device Name</label>
-                                <input id="payload_name" type="text" class="form-control" placeholder="e.g., Front Door Camera">
-                                <small class="form-text text-muted">Human-readable device identifier</small>
-                            </div>
+							<div class="mb-3">
+								<label for="payload_name" class="form-label">Device Name</label>
+								<input id="payload_name" type="text" class="form-control" placeholder="e.g., Front Door Camera">
+								<div class="form-text">Human-readable device identifier</div>
+							</div>
 
-                            <div class="mb-3">
-                                <label for="payload_location" class="form-label">Location</label>
-                                <input id="payload_location" type="text" class="form-control" placeholder="e.g., Building A, Floor 2">
-                                <small class="form-text text-muted">Physical location, IP address, or FQDN</small>
-                            </div>
+							<div class="mb-3">
+								<label for="payload_location" class="form-label">Location</label>
+								<input id="payload_location" type="text" class="form-control" placeholder="e.g., Building A, Floor 2">
+								<div class="form-text">Physical location, IP address, or FQDN</div>
+							</div>
 
-                            <div class="d-grid gap-2">
-                                <button id="update_payload" type="button" class="btn btn-primary btn-save">Update Device Info</button>
-                            </div>
-                        </div>
-                    </div>
+							<div class="d-grid gap-2">
+								<button id="update_payload" type="button" class="btn btn-primary">Update Device Info</button>
+							</div>
+						</div>
+					</div>
 
-                    <!-- Help Card -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">MQTT Configuration Help</h5>
-                        </div>
-                        <div class="card-body">
-                            <p class="info-text mb-2"><strong>Connection Steps:</strong></p>
-                            <ol class="info-text">
-                                <li>Enter your MQTT broker address and port</li>
-                                <li>Configure authentication (username/password)</li>
-                                <li>Select TLS mode if your broker requires encryption</li>
-                                <li>Click "Connect" to establish connection</li>
-                            </ol>
-                            <p class="info-text mb-0">
-                                <strong>Note:</strong> Changes take effect immediately. The connection status
-                                will update automatically.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </div>
+					<!-- Help Card -->
+					<div class="card">
+						<div class="card-header">
+							<h5 class="card-title mb-0">MQTT Configuration Help</h5>
+						</div>
+						<div class="card-body">
+							<p class="info-text mb-2"><strong>Connection Steps:</strong></p>
+							<ol class="info-text">
+								<li>Enter your MQTT broker address and port</li>
+								<li>Configure authentication (username/password)</li>
+								<li>Select TLS mode if your broker requires encryption</li>
+								<li>Click "Connect" to establish connection</li>
+							</ol>
+							<p class="info-text mb-0">
+								<strong>Note:</strong> Changes take effect immediately. The connection status
+								will update automatically.
+							</p>
+						</div>
+					</div>
+				</div>
+			</div>
 
-        </div>
-    </div>
-    <div class="toast-container position-fixed top-0 end-0 p-3">
-    </div>
+		</div>
+	</div>
+
+	<div class="toast-container position-fixed top-0 end-0 p-3"></div>
 </div>
 
 <script>
@@ -256,220 +156,191 @@ let MQTT_Client = 0;
 var app = null;
 
 $(document).ready(function() {
-    $.ajax({
-        type: "GET",
-        url: 'app',
-        dataType: 'json',
-        cache: false,
-        success: function(data) {
-            app = data;
-            document.title = app.manifest.acapPackageConf.setup.friendlyName + ' - MQTT';
-            $('.sidebar-heading').text(app.manifest.acapPackageConf.setup.friendlyName);
-            updateStatusDisplay(app.status.mqtt);
-        },
-        error: function(response) {
-            showToast("The application is not running",'danger');
-        }
-    });
+	$.ajax({
+		type: "GET",
+		url: 'app',
+		dataType: 'json',
+		cache: false,
+		success: function(data) {
+			app = data;
+			document.title = app.manifest.acapPackageConf.setup.friendlyName + ' - MQTT';
+			$('.sidebar-heading').text(app.manifest.acapPackageConf.setup.friendlyName);
+			updateStatusDisplay(app.status.mqtt);
+		},
+		error: function(response) {
+			showToast("The application is not running", 'danger');
+		}
+	});
 
-    $.ajax({
-        type: "GET",
-        url: 'mqtt',
-        dataType: 'json',
-        cache: false,
-        success: function(mqtt) {
-            $('#mqtt_address').val(mqtt.address);
-            $('#mqtt_port').val(mqtt.port);
-            $('#mqtt_user').val(mqtt.user);
-            $('#mqtt_password').val(mqtt.password);
-            $('#mqtt_preTopic').val(mqtt.preTopic);
-            $('#payload_name').val(mqtt.payload.name);
-            $('#payload_location').val(mqtt.payload.location);
-            if( mqtt.tls === false ) {
-                $("#mqtt_tls").val("none");
-            } else {
-                if( mqtt.validate )
-                    $("#mqtt_tls").val("verify");
-                else
-                    $("#mqtt_tls").val("noverify");
-            }
-        },
-        error: function(response) {
-            showToast("No MQTT settings",'warning');
-        }
-    });
+	$.ajax({
+		type: "GET",
+		url: 'mqtt',
+		dataType: 'json',
+		cache: false,
+		success: function(mqtt) {
+			$('#mqtt_address').val(mqtt.address);
+			$('#mqtt_port').val(mqtt.port);
+			$('#mqtt_user').val(mqtt.user);
+			$('#mqtt_password').val(mqtt.password);
+			$('#mqtt_preTopic').val(mqtt.preTopic);
+			$('#payload_name').val(mqtt.payload.name);
+			$('#payload_location').val(mqtt.payload.location);
+			if ( mqtt.tls === false ) {
+				$("#mqtt_tls").val("none");
+			} else {
+				if ( mqtt.validate )
+					$("#mqtt_tls").val("verify");
+				else
+					$("#mqtt_tls").val("noverify");
+			}
+		},
+		error: function(response) {
+			showToast("No MQTT settings", 'warning');
+		}
+	});
 
-    // Status polling interval
-    setInterval(function() {
-        $.ajax({
-            type: "GET",
-            url: 'status',
-            dataType: 'json',
-            cache: false,
-            success: function(data) {
-                updateStatusDisplay(data.mqtt);
-            },
-            error: function(data) {
-                console.error("Failed to fetch status:", data);
-            }
-        });
-    }, 2000);
+	// Status polling interval
+	setInterval(function() {
+		$.ajax({
+			type: "GET",
+			url: 'status',
+			dataType: 'json',
+			cache: false,
+			success: function(data) {
+				updateStatusDisplay(data.mqtt);
+			},
+			error: function(data) {
+				console.error("Failed to fetch status:", data);
+			}
+		});
+	}, 2000);
 });
 
-// Update status display with indicator
+// Update status badge
 function updateStatusDisplay(mqtt) {
-    const statusText = mqtt.status || 'Unknown';
-    $('#mqtt_status').text(statusText);
+	const statusText = mqtt.status || 'Unknown';
+	const badge = $('#mqtt_status');
+	badge.text(statusText)
+		.removeClass('bg-success bg-warning bg-danger bg-info bg-secondary');
 
-    const indicator = $('#mqtt-status-display .status-indicator');
-    indicator.removeClass('status-ok status-warning status-error status-info status-inactive');
+	if (mqtt.connected) {
+		badge.addClass('bg-success');
+	} else if (statusText.toLowerCase().includes('connecting')) {
+		badge.addClass('bg-info');
+	} else if (statusText.toLowerCase().includes('error') || statusText.toLowerCase().includes('failed')) {
+		badge.addClass('bg-danger');
+	} else {
+		badge.addClass('bg-secondary');
+	}
 
-    if (mqtt.connected) {
-        indicator.addClass('status-ok');
-    } else if (statusText.toLowerCase().includes('connecting')) {
-        indicator.addClass('status-info');
-    } else if (statusText.toLowerCase().includes('error') || statusText.toLowerCase().includes('failed')) {
-        indicator.addClass('status-error');
-    } else {
-        indicator.addClass('status-inactive');
-    }
-
-    updateButtonState(mqtt);
+	updateButtonState(mqtt);
 }
 
 // Function to update button state
 function updateButtonState(mqtt) {
-    const button = $("#connect");
+	const button = $("#connect");
 
-    if (mqtt.connected) {
-        // Connected state - show disconnect button
-        button.text("Disconnect")
-             .removeClass("btn-primary btn-secondary")
-             .addClass("btn-danger")
-             .prop("disabled", false);
-    } else {
-        // Disconnected state - show connect button
-        button.text("Connect")
-             .removeClass("btn-danger btn-secondary")
-             .addClass("btn-primary")
-             .prop("disabled", false);
-    }
+	if (mqtt.connected) {
+		// Connected state - show disconnect button
+		button.text("Disconnect")
+			 .removeClass("btn-primary btn-secondary")
+			 .addClass("btn-danger")
+			 .prop("disabled", false);
+	} else {
+		// Disconnected state - show connect button
+		button.text("Connect")
+			 .removeClass("btn-danger btn-secondary")
+			 .addClass("btn-primary")
+			 .prop("disabled", false);
+	}
 }
 
 // Connect button click handler
 $("#connect").click(function() {
-    const button = $(this);
-    const isConnected = button.hasClass("btn-danger");
+	const button = $(this);
+	const isConnected = button.hasClass("btn-danger");
 
-    // Disable button during ajax call
-    button.prop("disabled", true).addClass("btn-secondary");
+	// Disable button during ajax call
+	button.prop("disabled", true).addClass("btn-secondary");
 
-    if( isConnected ) {
-        $.ajax({
-            type: "GET",
-            url: 'mqtt?action=disconnect',
-            dataType: 'text',
-            success: function(response) {
-                showToast("Disconnecting from MQTT broker...", "info");
-                // Button state will be updated by the status polling
-            },
-            error: function(response) {
-                showToast("Failed to disconnect","danger");
-                button.prop("disabled", false).removeClass("btn-secondary");
-            }
-        });
-    } else {
-        var settings = {
-            "connect":true,
-            "address": $('#mqtt_address').val(),
-            "port":$('#mqtt_port').val(),
-            "user":$('#mqtt_user').val(),
-            "password":$('#mqtt_password').val(),
-            "preTopic":$('#mqtt_preTopic').val(),
-            "tls": false,
-            "verify": false,
-        }
-        var tlsMode = $("#mqtt_tls").val();
-        if( tlsMode === "verify" ) {
-            settings.tls = true;
-            settings.verify = true;
-        }
+	if ( isConnected ) {
+		$.ajax({
+			type: "GET",
+			url: 'mqtt?action=disconnect',
+			dataType: 'text',
+			success: function(response) {
+				showToast("Disconnecting from MQTT broker...", "info");
+				// Button state will be updated by the status polling
+			},
+			error: function(response) {
+				showToast("Failed to disconnect", "danger");
+				button.prop("disabled", false).removeClass("btn-secondary");
+			}
+		});
+	} else {
+		var settings = {
+			"connect": true,
+			"address": $('#mqtt_address').val(),
+			"port": $('#mqtt_port').val(),
+			"user": $('#mqtt_user').val(),
+			"password": $('#mqtt_password').val(),
+			"preTopic": $('#mqtt_preTopic').val(),
+			"tls": false,
+			"verify": false,
+		}
+		var tlsMode = $("#mqtt_tls").val();
+		if ( tlsMode === "verify" ) {
+			settings.tls = true;
+			settings.verify = true;
+		}
 
-        if(tlsMode === "noverify" ) {
-            settings.tls = true;
-            settings.verify = false;
-        }
-        $.ajax({
-            type: "GET",
-            url: 'mqtt?json=' + encodeURI(JSON.stringify(settings)),
-            contentType: 'application/json',
-            dataType: 'text',
-            success: function(response) {
-                showToast("MQTT configuration saved and connecting...","success");
-                // Button state will be updated by the status polling
-            },
-            error: function(response) {
-                if( settings.tls === true && settings.verify === true ) {
-                    showToast("Unable to connect. Check: Address, User/Password, and Certificate verification","danger");
-                    button.prop("disabled", false).removeClass("btn-secondary");
-                    return;
-                }
-                showToast("Unable to connect. Check: Address and User/Password","danger");
-                button.prop("disabled", false).removeClass("btn-secondary");
-            }
-        });
-    }
+		if ( tlsMode === "noverify" ) {
+			settings.tls = true;
+			settings.verify = false;
+		}
+		$.ajax({
+			type: "GET",
+			url: 'mqtt?json=' + encodeURI(JSON.stringify(settings)),
+			contentType: 'application/json',
+			dataType: 'text',
+			success: function(response) {
+				showToast("MQTT configuration saved and connecting...", "success");
+				// Button state will be updated by the status polling
+			},
+			error: function(response) {
+				if ( settings.tls === true && settings.verify === true ) {
+					showToast("Unable to connect. Check: Address, User/Password, and Certificate verification", "danger");
+					button.prop("disabled", false).removeClass("btn-secondary");
+					return;
+				}
+				showToast("Unable to connect. Check: Address and User/Password", "danger");
+				button.prop("disabled", false).removeClass("btn-secondary");
+			}
+		});
+	}
 });
 
 $("#update_payload").click(function() {
-    var settings = {
-        payload: {
-            name: $('#payload_name').val(),
-            location: $('#payload_location').val()
-        }
-    };
+	var settings = {
+		payload: {
+			name: $('#payload_name').val(),
+			location: $('#payload_location').val()
+		}
+	};
 
-    $.ajax({
-        type: "GET",
-        url: 'mqtt?json=' + encodeURI(JSON.stringify(settings)),
-        contentType: 'application/json',
-        dataType: 'text',
-        success: function(response) {
-            showToast("Device identification updated successfully","success");
-        },
-        error: function(response) {
-            showToast("Failed to update device identification","danger");
-        }
-    });
+	$.ajax({
+		type: "GET",
+		url: 'mqtt?json=' + encodeURI(JSON.stringify(settings)),
+		contentType: 'application/json',
+		dataType: 'text',
+		success: function(response) {
+			showToast("Device identification updated successfully", "success");
+		},
+		error: function(response) {
+			showToast("Failed to update device identification", "danger");
+		}
+	});
 });
-
-function showToast(message, type = 'danger') {
-    const toastContainer = document.querySelector('.toast-container');
-
-    // Determine text color class based on type
-    const textColorClass = type === 'warning' ? 'text-dark' : 'text-white';
-
-    // Create the toast HTML structure
-    var toastHtml = '';
-    toastHtml += '<div class="toast align-items-center ' + textColorClass + ' bg-' + type + ' border-0" role="alert" aria-live="assertive" aria-atomic="true">';
-    toastHtml += '   <div class="d-flex">';
-    toastHtml += '     <div class="toast-body">' + message + '</div>';
-    toastHtml += '     <button type="button" class="btn-close' + (type === 'warning' ? '' : ' btn-close-white') + ' me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>';
-    toastHtml += '   </div>';
-    toastHtml += '</div>';
-
-    toastContainer.insertAdjacentHTML('beforeend', toastHtml);
-    const toastElement = toastContainer.lastElementChild;
-    const toast = new bootstrap.Toast(toastElement, {
-        autohide: true,
-        delay: 5000
-    });
-    toast.show();
-    toastElement.addEventListener('hidden.bs.toast', function() {
-        this.remove();
-    });
-}
-
 </script>
 </body>
 </html>

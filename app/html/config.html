@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Configuration</title>
+	<link rel="stylesheet" href="css/bootstrap.min.css">
+	<link rel="stylesheet" href="css/app.css">
+	<script src="js/jquery-3.7.1.min.js"></script>
+	<script src="js/bootstrap.bundle.min.js"></script>
+	<script src="js/toast.js"></script>
+</head>
+<body>
+<div class="d-flex" id="wrapper">
+	<div class="bg-light border-right" id="sidebar-wrapper">
+		<div class="sidebar-heading">&nbsp;</div>
+		<div class="list-group list-group-flush">
+			<a href="index.html" class="list-group-item list-group-item-action">Transcriptions</a>
+			<a href="config.html" class="list-group-item list-group-item-action active">Configuration</a>
+			<a href="mqtt.html" class="list-group-item list-group-item-action">MQTT</a>
+			<a href="about.html" class="list-group-item list-group-item-action">About</a>
+		</div>
+	</div>
+
+	<div id="page-content-wrapper" class="p-0">
+		<div class="container-fluid">
+			<div class="row g-3">
+				<div class="col-lg-6">
+					<div class="card">
+						<div class="card-header d-flex justify-content-between align-items-center">
+							<h5 class="card-title mb-0">Transcription Engine</h5>
+							<button type="button" class="btn btn-sm btn-outline-primary" id="open-optimization-wizard">Optimization Wizard</button>
+						</div>
+						<div class="card-body">
+							<form id="config-form">
+								<div class="mb-3">
+									<label for="transcription_use_case" class="form-label">Use Case</label>
+									<select class="form-select" id="transcription_use_case">
+										<option value="continuous">Continuous transcription (quality first)</option>
+										<option value="voice_commands">Voice commands (speed first)</option>
+									</select>
+									<div class="form-text">Select behavior profile for transcript filtering and speech segmentation.</div>
+								</div>
+
+								<div class="mb-3">
+									<label for="stt_mode" class="form-label">STT Backend</label>
+									<select class="form-select" id="stt_mode">
+										<option value="internal">Internal Whisper (on-device)</option>
+										<option value="external">External Whisper (Wyoming)</option>
+									</select>
+								</div>
+
+								<div id="internal-whisper-section">
+									<div class="mb-3">
+										<label for="model" class="form-label">Model Size</label>
+										<select class="form-select" id="model">
+											<option value="base">Base (higher accuracy, slower)</option>
+											<option value="tiny">Tiny (lower accuracy, faster)</option>
+										</select>
+										<div class="form-text">Model changes take effect after app restart/reinstall.</div>
+									</div>
+
+									<div class="mb-3 form-check form-switch">
+										<input type="checkbox" class="form-check-input" id="translate">
+										<label class="form-check-label" for="translate">Translate speech to English</label>
+									</div>
+
+									<div class="row">
+										<div class="col-md-6 mb-3">
+											<label for="inference_threads" class="form-label">Inference Threads</label>
+											<input type="number" class="form-control" id="inference_threads" min="1" max="4" step="1">
+										</div>
+										<div class="col-md-6 mb-3">
+											<label for="max_tokens" class="form-label">Max Tokens per Utterance</label>
+											<input type="number" class="form-control" id="max_tokens" min="1" step="1">
+										</div>
+									</div>
+								</div>
+
+								<div id="external-whisper-section" class="d-none">
+									<div class="mb-3">
+										<label for="wyoming_host" class="form-label">Wyoming Host</label>
+										<input type="text" class="form-control" id="wyoming_host" placeholder="192.168.1.100">
+									</div>
+									<div class="mb-3">
+										<label for="wyoming_whisper_port" class="form-label">Whisper Port</label>
+										<input type="number" class="form-control" id="wyoming_whisper_port" min="1" max="65535" step="1">
+										<div class="form-text">Port exposed by the Wyoming Whisper server.</div>
+									</div>
+								</div>
+
+									<div class="mb-3">
+										<label for="input_node" class="form-label">Audio Input</label>
+										<select class="form-select" id="input_node">
+											<option value="AudioDevice0Input0">Audio Input 1 (Processed)</option>
+										</select>
+										<div class="form-text">Uses processed microphone path AudioDevice0Input0 (gain and speech enhancement enabled).</div>
+									</div>
+
+								<div class="mb-3 form-check form-switch">
+									<input type="checkbox" class="form-check-input" id="enabled" checked>
+									<label class="form-check-label" for="enabled">Continuous listening enabled</label>
+									<div class="form-text">When enabled, the microphone stream is always monitored for speech and automatic transcription. When disabled, no utterances are processed.</div>
+								</div>
+
+								<div class="mb-3 d-none" id="voice-command-keywords-section">
+									<label for="command_keywords" class="form-label">Command Keywords</label>
+									<input type="text" class="form-control" id="command_keywords" placeholder="light, lights, garage, gate">
+									<div class="form-text">Comma-separated. In Voice Commands mode, transcripts shorter than 3 words are ignored and at least one keyword must match (fuzzy singular/plural tolerant).</div>
+								</div>
+
+								<div class="mb-3">
+									<label for="language" class="form-label">Language</label>
+									<select class="form-select" id="language">
+										<option value="auto" selected>Auto-detect</option>
+										<option value="en">English (en)</option>
+										<option value="sv">Swedish (sv)</option>
+										<option value="no">Norwegian (no)</option>
+										<option value="da">Danish (da)</option>
+										<option value="de">German (de)</option>
+										<option value="fr">French (fr)</option>
+										<option value="es">Spanish (es)</option>
+										<option value="it">Italian (it)</option>
+										<option value="pt">Portuguese (pt)</option>
+										<option value="nl">Dutch (nl)</option>
+										<option value="pl">Polish (pl)</option>
+										<option value="ru">Russian (ru)</option>
+										<option value="zh">Chinese (zh)</option>
+										<option value="ja">Japanese (ja)</option>
+										<option value="ko">Korean (ko)</option>
+										<option value="ar">Arabic (ar)</option>
+										<option value="fi">Finnish (fi)</option>
+										<option value="tr">Turkish (tr)</option>
+									</select>
+									<div class="form-text">"Auto-detect" reports the detected language with each transcript</div>
+								</div>
+
+								<div class="mb-3">
+									<label for="sensitivity" class="form-label">Microphone Sensitivity</label>
+									<select class="form-select" id="sensitivity">
+										<option value="low">Low</option>
+										<option value="normal" selected>Normal</option>
+										<option value="high">High</option>
+										<option value="maximum">Maximum</option>
+									</select>
+									<div class="form-text">Higher sensitivity picks up quieter speech, but is more prone to false triggers from background noise</div>
+								</div>
+
+								<div class="row">
+									<div class="col-md-6 mb-3">
+										<label for="silence_timeout_ms" class="form-label">Silence Timeout (ms)</label>
+										<input type="number" class="form-control" id="silence_timeout_ms" min="100" step="100">
+										<div class="form-text">Lower is more responsive; higher is safer for noisy spaces</div>
+									</div>
+									<div class="col-md-6 mb-3">
+										<label for="min_speech_ms" class="form-label">Minimum Speech (ms)</label>
+										<input type="number" class="form-control" id="min_speech_ms" min="0" step="50">
+										<div class="form-text">Lower captures short words faster, but may admit more noise</div>
+									</div>
+								</div>
+
+								<div class="mb-3">
+									<label for="max_utterance_sec" class="form-label">Max Utterance (sec)</label>
+									<input type="number" class="form-control" id="max_utterance_sec" min="1" step="1">
+								</div>
+
+								<button type="submit" class="btn btn-primary">Save Configuration</button>
+							</form>
+						</div>
+					</div>
+				</div>
+				<div class="col-lg-6">
+					<div class="card h-100">
+						<div class="card-header">
+							<h5 class="card-title mb-0">Wizard Guidance</h5>
+						</div>
+						<div class="card-body">
+							<p class="text-muted mb-2">Use the Optimization Wizard to validate microphone setup and tune detection/transcription behavior for your use case.</p>
+							<ul class="small text-muted mb-0">
+								<li>Microphone validation (near and far distance)</li>
+								<li>Background noise profiling</li>
+								<li>Use-case tuning for speed/quality/false trigger control</li>
+								<li>Final decision: Ignore or apply recommended settings</li>
+							</ul>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="toast-container position-fixed top-0 end-0 p-3"></div>
+</div>
+
+<div class="modal fade" id="optimizationWizardModal" tabindex="-1" aria-hidden="true">
+	<div class="modal-dialog modal-lg modal-dialog-scrollable">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title">Transcription Optimization Wizard</h5>
+				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+			</div>
+			<div class="modal-body">
+				<div class="d-flex justify-content-between align-items-center mb-2">
+					<div class="small text-muted" id="wizard-step-counter">Step 1</div>
+					<span class="badge bg-secondary" id="wizard-status-badge">Idle</span>
+				</div>
+				<div class="progress mb-3" role="progressbar" aria-label="Wizard progress">
+					<div class="progress-bar" id="wizard-progress" style="width: 0%">0%</div>
+				</div>
+				<h6 id="wizard-step-title" class="mb-1"></h6>
+				<p class="text-muted mb-3" id="wizard-step-reason"></p>
+				<div id="wizard-step-content" class="mb-3"></div>
+				<div class="border rounded p-3 small">
+					<div><strong>Live RMS:</strong> <span id="wizard-live-rms">0.000000</span></div>
+					<div><strong>Live Peak:</strong> <span id="wizard-live-peak">0.000000</span></div>
+					<div><strong>Background Average:</strong> <span id="wizard-noise-avg">0.000000</span></div>
+					<div><strong>Latest Transcript:</strong> <span id="wizard-latest-transcript">-</span></div>
+				</div>
+				<div class="mt-3" id="wizard-recommendation-box" style="display:none;">
+					<h6>Recommended Settings</h6>
+					<div class="small text-muted" id="wizard-recommendations"></div>
+				</div>
+			</div>
+			<div class="modal-footer justify-content-between">
+				<button type="button" class="btn btn-outline-secondary" id="wizard-prev-step">Previous Step</button>
+				<div>
+					<button type="button" class="btn btn-outline-danger" id="wizard-ignore">Ignore</button>
+					<button type="button" class="btn btn-success" id="wizard-apply">Use Recommended Settings</button>
+					<button type="button" class="btn btn-primary" id="wizard-next-step">Next Step</button>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+const wizardState = {
+	stepIndex: 0,
+	originalSettings: null,
+	recommendedSettings: null,
+	profile: {
+		environment: 'office',
+		goal: 'quality',
+		sporadicNoise: 'moderate'
+	},
+	rounds: {
+		validation: 3,
+		background: 3,
+		distance: 3
+	},
+	metrics: {
+		near: null,
+		far: null,
+		background: null,
+		nearRounds: [],
+		farRounds: [],
+		backgroundRounds: [],
+		lastTranscript: ''
+	},
+	statusPollId: null,
+	runningAction: false
+};
+
+const wizardSteps = [
+	{
+		title: '1. Validate Microphone Path',
+		reason: 'Confirms the processed microphone is alive before any optimization. This protects against tuning a broken input path.',
+		html: '<p class="small text-muted mb-2">Speak clearly near the camera and say <strong>"one two three"</strong> several times. Then click <strong>Run Check</strong>.</p><button class="btn btn-sm btn-outline-primary" id="wizard-action-validate">Run Check</button><div class="small text-muted mt-2">Validation checks sample flow and live levels.</div>'
+	},
+	{
+		title: '2. Understand Background Noise',
+		reason: 'Measures baseline noise so VAD can separate speech from fan/HVAC/background chatter.',
+		html: '<p class="small text-muted mb-2">Remain silent for 6 seconds and click <strong>Measure Background</strong>.</p><button class="btn btn-sm btn-outline-primary" id="wizard-action-background">Measure Background</button>'
+	},
+	{
+		title: '3. Describe Environment',
+		reason: 'Environment profile improves sensitivity/noise tradeoff for real-world use.',
+		html: '<div class="mb-2"><label class="form-label small">Common environment</label><select id="wizard-environment" class="form-select form-select-sm"><option value="quiet">Quiet room</option><option value="office" selected>Office / home office</option><option value="busy">Busy / public area</option><option value="outdoor">Outdoor / variable noise</option></select></div><div class="mb-2"><label class="form-label small">Sporadic sounds (doors, clanks, clicks)</label><select id="wizard-sporadic" class="form-select form-select-sm"><option value="low">Low</option><option value="moderate" selected>Moderate</option><option value="high">High</option></select></div><div class="row g-2"><div class="col-sm-4"><label class="form-label small">Validation rounds</label><input id="wizard-rounds-validation" class="form-control form-control-sm" type="number" min="1" max="8" step="1"></div><div class="col-sm-4"><label class="form-label small">Background rounds</label><input id="wizard-rounds-background" class="form-control form-control-sm" type="number" min="1" max="8" step="1"></div><div class="col-sm-4"><label class="form-label small">Distance rounds</label><input id="wizard-rounds-distance" class="form-control form-control-sm" type="number" min="1" max="8" step="1"></div></div>'
+	},
+	{
+		title: '4. Near vs Far Detection (3-6m)',
+		reason: 'Compares close-talk and distance speech to tune VAD sensitivity and minimum speech duration.',
+		html: '<p class="small text-muted mb-2">First stand close to the mic and say <strong>"testing audio transcriptions"</strong>, then click Near Test.</p><button class="btn btn-sm btn-outline-primary me-2" id="wizard-action-near">Near Test</button><button class="btn btn-sm btn-outline-primary" id="wizard-action-far">Far Test (3-6m)</button>'
+	},
+	{
+		title: '5. Use-Case Goal',
+		reason: 'Each goal needs different tradeoffs between speed, transcript quality, and false-trigger resistance.',
+		html: '<label class="form-label small">Primary optimization target</label><select id="wizard-goal" class="form-select form-select-sm"><option value="continuous">Continuous transcription</option><option value="speed">Fast response speed</option><option value="quality" selected>Highest transcript quality</option><option value="strict">Ignore sporadic sounds / stricter trigger</option><option value="balanced">Balanced quality + latency</option></select><div class="small text-muted mt-2">TTS challenge note: if using external TTS later, higher noise suppression usually improves transcript-to-speech coherence.</div>'
+	},
+	{
+		title: '6. Final Recommendation',
+		reason: 'Shows calculated settings based on microphone checks, VAD behavior, noise profile, and speed/quality target.',
+		html: '<p class="small text-muted mb-0">Review recommendations below, then choose <strong>Ignore</strong> or <strong>Use Recommended Settings</strong>.</p>'
+	}
+];
+
+function apiGet(url) {
+	return $.ajax({ type: 'GET', url, dataType: 'json', cache: false });
+}
+
+function apiPostSettings(settings) {
+	return $.ajax({ type: 'POST', url: 'settings', contentType: 'application/json', data: JSON.stringify(settings) });
+}
+
+function sleep(ms) {
+	return new Promise(function(resolve) { setTimeout(resolve, ms); });
+}
+
+function formatLevel(value) {
+	const n = Number(value || 0);
+	if (!Number.isFinite(n)) return '0.000000';
+	if (n !== 0 && Math.abs(n) < 0.0001) return n.toExponential(2);
+	return n.toFixed(6);
+}
+
+function currentSettingsFromForm() {
+	return {
+		transcription_use_case: $('#transcription_use_case').val(),
+		stt_mode: $('#stt_mode').val(),
+		model: $('#model').val(),
+		wyoming_host: ($('#wyoming_host').val() || '').trim(),
+		wyoming_whisper_port: parseInt($('#wyoming_whisper_port').val(), 10) || 10300,
+		enabled: $('#enabled').is(':checked'),
+		command_keywords: ($('#command_keywords').val() || '').trim(),
+		input_node: $('#input_node').val(),
+		language: $('#language').val(),
+		translate: $('#translate').is(':checked'),
+		sensitivity: $('#sensitivity').val(),
+		silence_timeout_ms: parseInt($('#silence_timeout_ms').val(), 10),
+		min_speech_ms: parseInt($('#min_speech_ms').val(), 10),
+		max_utterance_sec: parseInt($('#max_utterance_sec').val(), 10),
+		inference_threads: parseInt($('#inference_threads').val(), 10),
+		max_tokens: parseInt($('#max_tokens').val(), 10),
+		wizard_environment: wizardState.profile.environment,
+		wizard_goal: wizardState.profile.goal,
+		wizard_sporadic_noise: wizardState.profile.sporadicNoise,
+		wizard_validation_rounds: wizardState.rounds.validation,
+		wizard_background_rounds: wizardState.rounds.background,
+		wizard_distance_rounds: wizardState.rounds.distance
+	};
+}
+
+function updateModeSections() {
+	const mode = $('#stt_mode').val() || 'internal';
+	if (mode === 'external') {
+		$('#internal-whisper-section').addClass('d-none');
+		$('#external-whisper-section').removeClass('d-none');
+	} else {
+		$('#internal-whisper-section').removeClass('d-none');
+		$('#external-whisper-section').addClass('d-none');
+	}
+}
+
+function updateUseCaseSections() {
+	const useCase = $('#transcription_use_case').val() || 'continuous';
+	if (useCase === 'voice_commands') {
+		$('#voice-command-keywords-section').removeClass('d-none');
+	} else {
+		$('#voice-command-keywords-section').addClass('d-none');
+	}
+}
+
+function setWizardStatus(text, cls) {
+	$('#wizard-status-badge').text(text).removeClass('bg-secondary bg-info bg-warning bg-success bg-danger').addClass(cls || 'bg-secondary');
+}
+
+function updateWizardProgress() {
+	const percent = Math.round(((wizardState.stepIndex + 1) / wizardSteps.length) * 100);
+	$('#wizard-progress').css('width', percent + '%').text(percent + '%');
+	$('#wizard-step-counter').text('Step ' + (wizardState.stepIndex + 1) + ' of ' + wizardSteps.length);
+	$('#wizard-prev-step').prop('disabled', wizardState.stepIndex === 0);
+	$('#wizard-next-step').prop('disabled', wizardState.stepIndex === wizardSteps.length - 1);
+	const isFinal = wizardState.stepIndex === wizardSteps.length - 1;
+	$('#wizard-ignore').toggle(isFinal);
+	$('#wizard-apply').toggle(isFinal);
+	if (!isFinal) {
+		$('#wizard-recommendation-box').hide();
+	}
+}
+
+function renderWizardStep() {
+	const step = wizardSteps[wizardState.stepIndex];
+	$('#wizard-step-title').text(step.title);
+	$('#wizard-step-reason').text(step.reason);
+	$('#wizard-step-content').html(step.html);
+	updateWizardProgress();
+
+	if (wizardState.stepIndex === 2) {
+		$('#wizard-environment').val(wizardState.profile.environment);
+		$('#wizard-sporadic').val(wizardState.profile.sporadicNoise);
+		$('#wizard-rounds-validation').val(wizardState.rounds.validation);
+		$('#wizard-rounds-background').val(wizardState.rounds.background);
+		$('#wizard-rounds-distance').val(wizardState.rounds.distance);
+	}
+	if (wizardState.stepIndex === 4) {
+		$('#wizard-goal').val(wizardState.profile.goal);
+	}
+}
+
+function startWizardStatusPolling() {
+	stopWizardStatusPolling();
+	wizardState.statusPollId = setInterval(async function() {
+		try {
+			const status = await apiGet('status');
+			$('#wizard-live-rms').text(formatLevel(status.input?.rms || 0));
+			$('#wizard-live-peak').text(formatLevel(status.input?.peak || 0));
+			$('#wizard-noise-avg').text(formatLevel(wizardState.metrics.background || 0));
+			$('#wizard-latest-transcript').text(status.stt?.last_transcript || '-');
+		} catch (e) {
+			// transient status failure ignored
+		}
+	}, 400);
+}
+
+function stopWizardStatusPolling() {
+	if (wizardState.statusPollId) {
+		clearInterval(wizardState.statusPollId);
+		wizardState.statusPollId = null;
+	}
+}
+
+async function measureForSeconds(seconds) {
+	const levels = [];
+	const start = Date.now();
+	while (Date.now() - start < seconds * 1000) {
+		const status = await apiGet('status');
+		levels.push({
+			rms: Number(status.input?.rms || 0),
+			peak: Number(status.input?.peak || 0),
+			samples: Number(status.input?.samples || 0)
+		});
+		await sleep(250);
+	}
+	return levels;
+}
+
+function summarizeLevels(levels) {
+	if (!levels.length) return { avgRms: 0, maxPeak: 0, sampleDelta: 0 };
+	const avgRms = levels.reduce(function(sum, l) { return sum + l.rms; }, 0) / levels.length;
+	const maxPeak = Math.max.apply(null, levels.map(function(l) { return l.peak; }));
+	const sampleDelta = levels[levels.length - 1].samples - levels[0].samples;
+	return { avgRms, maxPeak, sampleDelta };
+}
+
+function aggregateSummaries(summaries) {
+	if (!summaries || !summaries.length) {
+		return { avgRms: 0, maxPeak: 0, sampleDelta: 0 };
+	}
+	return {
+		avgRms: summaries.reduce(function(sum, s) { return sum + s.avgRms; }, 0) / summaries.length,
+		maxPeak: Math.max.apply(null, summaries.map(function(s) { return s.maxPeak; })),
+		sampleDelta: summaries.reduce(function(sum, s) { return sum + s.sampleDelta; }, 0) / summaries.length
+	};
+}
+
+async function runMicValidation() {
+	if (wizardState.runningAction) return;
+	wizardState.runningAction = true;
+	setWizardStatus('Running', 'bg-info');
+	try {
+		const rounds = Math.max(1, wizardState.rounds.validation);
+		const summaries = [];
+		for (let i = 0; i < rounds; i++) {
+			setWizardStatus('Round ' + (i + 1) + '/' + rounds, 'bg-info');
+			const levels = await measureForSeconds(6);
+			summaries.push(summarizeLevels(levels));
+			if (i < rounds - 1) await sleep(500);
+		}
+		const s = aggregateSummaries(summaries);
+		wizardState.metrics.near = s;
+		wizardState.metrics.nearRounds = summaries;
+		if (s.sampleDelta > 4000 || s.maxPeak > 0.00008 || s.avgRms > 0.00003) {
+			showToast('Microphone validation passed (' + rounds + ' rounds).', 'success');
+			setWizardStatus('Mic OK', 'bg-success');
+		} else {
+			showToast('Mic activity is low. Verify camera mic input configuration.', 'warning');
+			setWizardStatus('Low Signal', 'bg-warning');
+		}
+	} catch (e) {
+		setWizardStatus('Error', 'bg-danger');
+		showToast('Microphone validation failed.', 'danger');
+	} finally {
+		wizardState.runningAction = false;
+	}
+}
+
+async function runBackgroundMeasurement() {
+	if (wizardState.runningAction) return;
+	wizardState.runningAction = true;
+	setWizardStatus('Measuring', 'bg-info');
+	try {
+		const rounds = Math.max(1, wizardState.rounds.background);
+		const summaries = [];
+		for (let i = 0; i < rounds; i++) {
+			setWizardStatus('Round ' + (i + 1) + '/' + rounds, 'bg-info');
+			const levels = await measureForSeconds(4);
+			summaries.push(summarizeLevels(levels));
+			if (i < rounds - 1) await sleep(500);
+		}
+		const s = aggregateSummaries(summaries);
+		wizardState.metrics.background = s.avgRms;
+		wizardState.metrics.backgroundRounds = summaries;
+		$('#wizard-noise-avg').text(formatLevel(s.avgRms));
+		setWizardStatus('Background Ready', 'bg-success');
+		showToast('Background profile captured (' + rounds + ' rounds).', 'success');
+	} catch (e) {
+		setWizardStatus('Error', 'bg-danger');
+		showToast('Background measurement failed.', 'danger');
+	} finally {
+		wizardState.runningAction = false;
+	}
+}
+
+async function runDistanceTest(isFar) {
+	if (wizardState.runningAction) return;
+	wizardState.runningAction = true;
+	setWizardStatus(isFar ? 'Far Test' : 'Near Test', 'bg-info');
+	try {
+		const expected = 'testing audio transcriptions';
+		const rounds = Math.max(1, wizardState.rounds.distance);
+		const summaries = [];
+		for (let round = 0; round < rounds; round++) {
+			setWizardStatus((isFar ? 'Far' : 'Near') + ' ' + (round + 1) + '/' + rounds, 'bg-info');
+			const startStatus = await apiGet('status');
+			const startCount = Number(startStatus.stt?.count || 0);
+			const levels = await measureForSeconds(6);
+			let transcript = '';
+			for (let i = 0; i < 6; i++) {
+				const status = await apiGet('status');
+				if (Number(status.stt?.count || 0) > startCount) {
+					transcript = String(status.stt?.last_transcript || '');
+					break;
+				}
+				await sleep(800);
+			}
+			const summary = summarizeLevels(levels);
+			summary.transcript = transcript;
+			summary.expected = expected;
+			summaries.push(summary);
+			if (round < rounds - 1) await sleep(500);
+		}
+		const summary = aggregateSummaries(summaries);
+		summary.expected = expected;
+		summary.transcript = summaries.map(function(s) { return s.transcript || ''; }).filter(Boolean).join(' | ');
+		if (isFar) {
+			wizardState.metrics.far = summary;
+			wizardState.metrics.farRounds = summaries;
+		} else {
+			wizardState.metrics.near = summary;
+			wizardState.metrics.nearRounds = summaries;
+		}
+		setWizardStatus('Test Captured', 'bg-success');
+		showToast((isFar ? 'Far' : 'Near') + ' test captured (' + rounds + ' rounds).', 'success');
+	} catch (e) {
+		setWizardStatus('Error', 'bg-danger');
+		showToast('Distance test failed.', 'danger');
+	} finally {
+		wizardState.runningAction = false;
+	}
+}
+
+function buildRecommendation() {
+	const settings = Object.assign({}, wizardState.originalSettings || currentSettingsFromForm());
+	settings.input_node = 'AudioDevice0Input0';
+	settings.enabled = true;
+
+	const bg = wizardState.metrics.background || 0;
+	const nearPeak = wizardState.metrics.near?.maxPeak || 0;
+	const farPeak = wizardState.metrics.far?.maxPeak || 0;
+	const goal = wizardState.profile.goal;
+	const sporadic = wizardState.profile.sporadicNoise;
+	settings.wizard_environment = wizardState.profile.environment;
+	settings.wizard_goal = wizardState.profile.goal;
+	settings.wizard_sporadic_noise = wizardState.profile.sporadicNoise;
+	settings.wizard_validation_rounds = wizardState.rounds.validation;
+	settings.wizard_background_rounds = wizardState.rounds.background;
+	settings.wizard_distance_rounds = wizardState.rounds.distance;
+
+	if (goal === 'speed') {
+		settings.model = 'tiny';
+		settings.max_tokens = 32;
+		settings.silence_timeout_ms = 500;
+		settings.min_speech_ms = 180;
+	} else if (goal === 'quality') {
+		settings.model = 'base';
+		settings.max_tokens = 64;
+		settings.silence_timeout_ms = 900;
+		settings.min_speech_ms = 260;
+	} else if (goal === 'strict') {
+		settings.model = 'base';
+		settings.sensitivity = 'low';
+		settings.silence_timeout_ms = 1000;
+		settings.min_speech_ms = 320;
+	} else if (goal === 'continuous') {
+		settings.model = settings.stt_mode === 'external' ? settings.model : 'tiny';
+		settings.silence_timeout_ms = 650;
+		settings.min_speech_ms = 180;
+		settings.max_utterance_sec = 12;
+	} else {
+		settings.silence_timeout_ms = 750;
+		settings.min_speech_ms = 220;
+	}
+
+	if (bg > 0.003 || sporadic === 'high') {
+		settings.sensitivity = 'low';
+		settings.min_speech_ms = Math.max(settings.min_speech_ms, 300);
+	}
+	if (farPeak > 0 && nearPeak > 0 && farPeak < nearPeak * 0.35) {
+		settings.sensitivity = settings.sensitivity === 'low' ? 'normal' : 'high';
+	}
+
+	return settings;
+}
+
+function renderRecommendationBox() {
+	wizardState.recommendedSettings = buildRecommendation();
+	const r = wizardState.recommendedSettings;
+	const details = [
+		'Backend: ' + r.stt_mode,
+		'Model: ' + r.model,
+		'Sensitivity/VAD: ' + r.sensitivity,
+		'Silence timeout: ' + r.silence_timeout_ms + ' ms',
+		'Min speech: ' + r.min_speech_ms + ' ms',
+		'Max tokens: ' + r.max_tokens,
+		'Goal profile: ' + wizardState.profile.goal,
+		'Noise profile: ' + wizardState.profile.environment + ' / sporadic=' + wizardState.profile.sporadicNoise,
+		'Test rounds: validation=' + wizardState.rounds.validation + ', background=' + wizardState.rounds.background + ', distance=' + wizardState.rounds.distance,
+		'Notes: TTS quality depends on transcript stability; strict VAD reduces noise transcripts but can miss quiet speech.'
+	];
+	$('#wizard-recommendations').html(details.map(function(x) { return '<div>' + x + '</div>'; }).join(''));
+	$('#wizard-recommendation-box').show();
+	setWizardStatus('Ready to Apply', 'bg-success');
+}
+
+function syncProfileInputs() {
+	if ($('#wizard-environment').length) wizardState.profile.environment = $('#wizard-environment').val();
+	if ($('#wizard-sporadic').length) wizardState.profile.sporadicNoise = $('#wizard-sporadic').val();
+	if ($('#wizard-goal').length) wizardState.profile.goal = $('#wizard-goal').val();
+	if ($('#wizard-rounds-validation').length) wizardState.rounds.validation = Math.max(1, Math.min(8, parseInt($('#wizard-rounds-validation').val(), 10) || 3));
+	if ($('#wizard-rounds-background').length) wizardState.rounds.background = Math.max(1, Math.min(8, parseInt($('#wizard-rounds-background').val(), 10) || 3));
+	if ($('#wizard-rounds-distance').length) wizardState.rounds.distance = Math.max(1, Math.min(8, parseInt($('#wizard-rounds-distance').val(), 10) || 3));
+}
+
+function openWizard() {
+	wizardState.stepIndex = 0;
+	wizardState.originalSettings = currentSettingsFromForm();
+	wizardState.recommendedSettings = null;
+	wizardState.metrics = { near: null, far: null, background: null, nearRounds: [], farRounds: [], backgroundRounds: [], lastTranscript: '' };
+	setWizardStatus('Idle', 'bg-secondary');
+	renderWizardStep();
+	startWizardStatusPolling();
+	const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('optimizationWizardModal'));
+	modal.show();
+}
+
+async function applyRecommendedSettings() {
+	try {
+		syncProfileInputs();
+		if (!wizardState.recommendedSettings) {
+			renderRecommendationBox();
+		}
+		await apiPostSettings(wizardState.recommendedSettings);
+		const s = wizardState.recommendedSettings;
+		$('#stt_mode').val(s.stt_mode);
+			$('#transcription_use_case').val(s.transcription_use_case || 'continuous');
+		$('#model').val(s.model);
+		$('#enabled').prop('checked', !!s.enabled);
+			$('#command_keywords').val(s.command_keywords || '');
+		$('#input_node').val(s.input_node);
+		$('#language').val(s.language);
+		$('#translate').prop('checked', !!s.translate);
+		$('#sensitivity').val(s.sensitivity);
+		$('#silence_timeout_ms').val(s.silence_timeout_ms);
+		$('#min_speech_ms').val(s.min_speech_ms);
+		$('#max_utterance_sec').val(s.max_utterance_sec);
+		$('#inference_threads').val(s.inference_threads);
+		$('#max_tokens').val(s.max_tokens);
+		wizardState.profile.environment = s.wizard_environment || wizardState.profile.environment;
+		wizardState.profile.goal = s.wizard_goal || wizardState.profile.goal;
+		wizardState.profile.sporadicNoise = s.wizard_sporadic_noise || wizardState.profile.sporadicNoise;
+		wizardState.rounds.validation = parseInt(s.wizard_validation_rounds, 10) || wizardState.rounds.validation;
+		wizardState.rounds.background = parseInt(s.wizard_background_rounds, 10) || wizardState.rounds.background;
+		wizardState.rounds.distance = parseInt(s.wizard_distance_rounds, 10) || wizardState.rounds.distance;
+		updateModeSections();
+		showToast('Recommended settings applied.', 'success');
+		bootstrap.Modal.getOrCreateInstance(document.getElementById('optimizationWizardModal')).hide();
+	} catch (e) {
+		showToast('Failed to apply recommended settings.', 'danger');
+	}
+}
+
+$(document).on('click', '#wizard-action-validate', runMicValidation);
+$(document).on('click', '#wizard-action-background', runBackgroundMeasurement);
+$(document).on('click', '#wizard-action-near', function() { runDistanceTest(false); });
+$(document).on('click', '#wizard-action-far', function() { runDistanceTest(true); });
+$(document).on('change', '#wizard-environment,#wizard-sporadic,#wizard-goal,#wizard-rounds-validation,#wizard-rounds-background,#wizard-rounds-distance', syncProfileInputs);
+
+$('#wizard-prev-step').on('click', function() {
+	syncProfileInputs();
+	if (wizardState.stepIndex > 0) {
+		wizardState.stepIndex -= 1;
+		renderWizardStep();
+	}
+});
+
+$('#wizard-next-step').on('click', function() {
+	syncProfileInputs();
+	if (wizardState.stepIndex < wizardSteps.length - 1) {
+		wizardState.stepIndex += 1;
+		renderWizardStep();
+		if (wizardState.stepIndex === wizardSteps.length - 1) {
+			renderRecommendationBox();
+		}
+	}
+});
+
+$('#wizard-ignore').on('click', function() {
+	showToast('Wizard closed without applying changes.', 'info');
+	bootstrap.Modal.getOrCreateInstance(document.getElementById('optimizationWizardModal')).hide();
+});
+
+$('#wizard-apply').on('click', applyRecommendedSettings);
+$('#open-optimization-wizard').on('click', openWizard);
+
+$('#optimizationWizardModal').on('hidden.bs.modal', function() {
+	stopWizardStatusPolling();
+});
+
+$(document).ready(function() {
+	$.ajax({
+		type: 'GET',
+		url: 'app',
+		dataType: 'json',
+		cache: false,
+		success: function(app) {
+			document.title = app.manifest.acapPackageConf.setup.friendlyName + ' - Configuration';
+			$('.sidebar-heading').text(app.manifest.acapPackageConf.setup.friendlyName);
+
+			if (app.settings) {
+				$('#stt_mode').val(app.settings.stt_mode || 'internal');
+				$('#transcription_use_case').val(app.settings.transcription_use_case || 'continuous');
+				$('#model').val(app.settings.model || 'base');
+				$('#wyoming_host').val(app.settings.wyoming_host || '');
+				$('#wyoming_whisper_port').val(app.settings.wyoming_whisper_port || 10300);
+				$('#enabled').prop('checked', app.settings.enabled !== false);
+				$('#command_keywords').val(app.settings.command_keywords || '');
+				$('#input_node').val(app.settings.input_node || 'AudioDevice0Input0');
+				$('#language').val(app.settings.language || 'auto');
+				$('#translate').prop('checked', !!app.settings.translate);
+				$('#sensitivity').val(app.settings.sensitivity || 'normal');
+				$('#silence_timeout_ms').val(app.settings.silence_timeout_ms || 650);
+				$('#min_speech_ms').val(app.settings.min_speech_ms || 250);
+				$('#max_utterance_sec').val(app.settings.max_utterance_sec || 8);
+				$('#inference_threads').val(app.settings.inference_threads || 3);
+				$('#max_tokens').val(app.settings.max_tokens || 48);
+				wizardState.profile.environment = app.settings.wizard_environment || 'office';
+				wizardState.profile.goal = app.settings.wizard_goal || 'quality';
+				wizardState.profile.sporadicNoise = app.settings.wizard_sporadic_noise || 'moderate';
+				wizardState.rounds.validation = parseInt(app.settings.wizard_validation_rounds, 10) || 3;
+				wizardState.rounds.background = parseInt(app.settings.wizard_background_rounds, 10) || 3;
+				wizardState.rounds.distance = parseInt(app.settings.wizard_distance_rounds, 10) || 3;
+				updateModeSections();
+				updateUseCaseSections();
+			}
+		},
+		error: function(response) {
+			showToast('Failed to load configuration: ' + response.statusText, 'danger');
+		}
+	});
+
+	$('#stt_mode').on('change', updateModeSections);
+	$('#transcription_use_case').on('change', updateUseCaseSections);
+	updateModeSections();
+	updateUseCaseSections();
+});
+
+$('#config-form').submit(function(e) {
+	e.preventDefault();
+
+	const settings = {
+		transcription_use_case: $('#transcription_use_case').val(),
+		stt_mode: $('#stt_mode').val(),
+		model: $('#model').val(),
+		wyoming_host: ($('#wyoming_host').val() || '').trim(),
+		wyoming_whisper_port: parseInt($('#wyoming_whisper_port').val(), 10) || 10300,
+		enabled: $('#enabled').is(':checked'),
+		command_keywords: ($('#command_keywords').val() || '').trim(),
+		input_node: $('#input_node').val(),
+		language: $('#language').val(),
+		translate: $('#translate').is(':checked'),
+		sensitivity: $('#sensitivity').val(),
+		silence_timeout_ms: parseInt($('#silence_timeout_ms').val(), 10),
+		min_speech_ms: parseInt($('#min_speech_ms').val(), 10),
+		max_utterance_sec: parseInt($('#max_utterance_sec').val(), 10),
+		inference_threads: parseInt($('#inference_threads').val(), 10),
+		max_tokens: parseInt($('#max_tokens').val(), 10),
+		wizard_environment: wizardState.profile.environment,
+		wizard_goal: wizardState.profile.goal,
+		wizard_sporadic_noise: wizardState.profile.sporadicNoise,
+		wizard_validation_rounds: wizardState.rounds.validation,
+		wizard_background_rounds: wizardState.rounds.background,
+		wizard_distance_rounds: wizardState.rounds.distance
+	};
+
+	$.ajax({
+		type: 'POST',
+		url: 'settings',
+		contentType: 'application/json',
+		data: JSON.stringify(settings),
+		success: function() {
+			showToast('Configuration saved successfully!', 'success');
+		},
+		error: function(xhr) {
+			showToast('Failed to save configuration: ' + (xhr.responseText || 'Unknown error'), 'danger');
+		}
+	});
+});
+</script>
+</body>
+</html>

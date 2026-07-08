@@ -1,638 +1,240 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Assistant</title>
-    <link rel="stylesheet" href="css/bootstrap.min.css">
-    <link rel="stylesheet" href="css/app.css">
-    <script src="js/jquery-3.7.1.min.js"></script>
-    <script src="js/bootstrap.bundle.min.js"></script>
-    <style>
-        :root {
-            --status-ok: #28a745;
-            --status-warning: #ffc107;
-            --status-error: #dc3545;
-            --status-info: #17a2b8;
-            --status-inactive: #6c757d;
-        }
-
-        body {
-            background-color: #f5f7fa;
-        }
-
-        .card {
-            border: none;
-            box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
-            margin-bottom: 1.5rem;
-            transition: box-shadow 0.3s;
-        }
-
-        .card:hover {
-            box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
-        }
-
-        .card-header {
-            background-color: #fff;
-            border-bottom: 2px solid #e9ecef;
-            font-weight: 600;
-        }
-
-        .status-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        .status-ok { background-color: var(--status-ok); }
-        .status-warning { background-color: var(--status-warning); }
-        .status-error { background-color: var(--status-error); }
-        .status-info { background-color: var(--status-info); }
-        .status-inactive { background-color: var(--status-inactive); }
-
-        .push-to-talk-btn {
-            width: 150px;
-            height: 150px;
-            border-radius: 50%;
-            font-size: 48px;
-            transition: all 0.3s;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-
-        .push-to-talk-btn:active {
-            transform: scale(0.95);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
-
-        .push-to-talk-btn.recording {
-            background-color: #dc3545 !important;
-            border-color: #dc3545 !important;
-            animation: pulse-recording 1s infinite;
-        }
-
-        @keyframes pulse-recording {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-        }
-
-        .transcript-display {
-            min-height: 100px;
-            padding: 1rem;
-            background-color: #f8f9fa;
-            border-radius: 0.25rem;
-            border: 1px solid #dee2e6;
-            font-size: 1.1rem;
-            color: #495057;
-        }
-
-        .config-section {
-            background-color: #f8f9fa;
-            padding: 1rem;
-            border-radius: 0.25rem;
-            margin-bottom: 1rem;
-        }
-
-        .form-label {
-            font-weight: 600;
-            color: #495057;
-        }
-
-        .btn-save {
-            min-width: 120px;
-        }
-
-        #sidebar-wrapper {
-            min-height: 100vh;
-        }
-
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1rem;
-        }
-
-        .status-item {
-            padding: 0.75rem;
-            background-color: white;
-            border-radius: 0.25rem;
-            border: 1px solid #e9ecef;
-        }
-
-        .status-item-label {
-            font-size: 0.85rem;
-            color: #6c757d;
-            margin-bottom: 0.25rem;
-        }
-
-        .status-item-value {
-            font-size: 1rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-        }
-    </style>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Transcriptions</title>
+	<link rel="stylesheet" href="css/bootstrap.min.css">
+	<link rel="stylesheet" href="css/app.css">
+	<script src="js/jquery-3.7.1.min.js"></script>
+	<script src="js/bootstrap.bundle.min.js"></script>
+	<script src="js/toast.js"></script>
 </head>
 <body>
 <div class="d-flex" id="wrapper">
-    <div class="bg-light border-right" id="sidebar-wrapper">
-        <div class="sidebar-heading">&nbsp;</div>
-        <div class="list-group list-group-flush">
-            <a href="index.html" class="list-group-item list-group-item-action active">Voice Assistant</a>
-            <a href="mqtt.html" class="list-group-item list-group-item-action">MQTT</a>
-            <a href="about.html" class="list-group-item list-group-item-action">About</a>
-        </div>
-    </div>
+	<div class="bg-light border-right" id="sidebar-wrapper">
+		<div class="sidebar-heading">&nbsp;</div>
+		<div class="list-group list-group-flush">
+			<a href="index.html" class="list-group-item list-group-item-action active">Transcriptions</a>
+			<a href="config.html" class="list-group-item list-group-item-action">Configuration</a>
+			<a href="mqtt.html" class="list-group-item list-group-item-action">MQTT</a>
+			<a href="about.html" class="list-group-item list-group-item-action">About</a>
+		</div>
+	</div>
 
-    <div id="page-content-wrapper" class="p-0">
-        <div class="container-fluid p-4">
+	<div id="page-content-wrapper" class="p-0">
+		<div class="container-fluid">
 
-            <!-- Status Dashboard -->
-            <div class="row">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">System Status</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="status-grid" id="status-grid">
-                                <div class="status-item">
-                                    <div class="status-item-label">MQTT Connection</div>
-                                    <div class="status-item-value" id="status-mqtt">
-                                        <span class="status-indicator status-inactive"></span>
-                                        <span>Checking...</span>
-                                    </div>
-                                </div>
-                                <div class="status-item">
-                                    <div class="status-item-label">Wyoming Piper (TTS)</div>
-                                    <div class="status-item-value" id="status-piper">
-                                        <span class="status-indicator status-inactive"></span>
-                                        <span>Checking...</span>
-                                    </div>
-                                </div>
-                                <div class="status-item">
-                                    <div class="status-item-label">Wyoming Whisper (STT)</div>
-                                    <div class="status-item-value" id="status-whisper">
-                                        <span class="status-indicator status-inactive"></span>
-                                        <span>Checking...</span>
-                                    </div>
-                                </div>
-                                <div class="status-item">
-                                    <div class="status-item-label">Audio Playback</div>
-                                    <div class="status-item-value" id="status-output">
-                                        <span class="status-indicator status-inactive"></span>
-                                        <span>Checking...</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+			<!-- System Status -->
+			<div class="row g-3 mb-3">
+				<div class="col-12">
+					<div class="card">
+						<div class="card-header">
+							<h5 class="card-title mb-0">System Status</h5>
+						</div>
+						<div class="card-body p-0">
+							<table class="table mb-0">
+								<tbody>
+									<tr>
+										<td class="ps-3 text-muted" style="width:220px">Microphone</td>
+										<td><span id="status-input" class="badge bg-secondary state-badge">Checking...</span></td>
+									</tr>
+									<tr>
+										<td class="ps-3 text-muted">Transcription Engine</td>
+										<td><span id="status-engine" class="badge bg-secondary state-badge">Checking...</span></td>
+									</tr>
+									<tr>
+										<td class="ps-3 text-muted">MQTT Connection</td>
+										<td><span id="status-mqtt" class="badge bg-secondary state-badge">Checking...</span></td>
+									</tr>
+									<tr>
+										<td class="ps-3 text-muted">Transcript Count</td>
+										<td><span id="status-count" class="badge bg-info state-badge">0</span></td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					</div>
+				</div>
+			</div>
 
-            <div class="row">
-                <!-- Left Column: Configuration -->
-                <div class="col-lg-6">
+			<!-- Transcriptions -->
+			<div class="row g-3">
+				<div class="col-12">
+					<div class="card">
+						<div class="card-header d-flex justify-content-between align-items-center">
+							<h5 class="card-title mb-0">Transcriptions</h5>
+							<button id="clear-transcripts" class="btn btn-sm btn-outline-secondary" type="button">Clear</button>
+						</div>
+						<div class="card-body p-0">
+							<div id="transcript-list">
+								<div class="ps-3 pe-3 pt-3 pb-3 text-muted text-center">Listening for speech...</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
 
-                    <!-- Wyoming Configuration -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">Wyoming Protocol Configuration</h5>
-                        </div>
-                        <div class="card-body">
-                            <form id="wyoming-config-form">
-                                <div class="mb-3">
-                                    <label for="wyoming-server" class="form-label">Wyoming Server IP</label>
-                                    <input type="text" class="form-control" id="wyoming-server" placeholder="10.13.8.2" required>
-                                    <small class="form-text text-muted">IP address of Wyoming protocol server</small>
-                                </div>
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label for="piper-port" class="form-label">Piper Port (TTS)</label>
-                                        <input type="number" class="form-control" id="piper-port" placeholder="10200" required>
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label for="whisper-port" class="form-label">Whisper Port (STT)</label>
-                                        <input type="number" class="form-control" id="whisper-port" placeholder="10300" required>
-                                    </div>
-                                </div>
-                                <div class="mb-3">
-                                    <label for="language" class="form-label">Language</label>
-                                    <select class="form-select" id="language">
-                                        <option value="en" selected>English (en)</option>
-                                        <option value="sv">Swedish (sv)</option>
-                                        <option value="no">Norwegian (no)</option>
-                                        <option value="da">Danish (da)</option>
-                                        <option value="de">German (de)</option>
-                                        <option value="fr">French (fr)</option>
-                                        <option value="es">Spanish (es)</option>
-                                    </select>
-                                </div>
-                                <button type="submit" class="btn btn-primary btn-save">
-                                    <i class="bi bi-save"></i> Save Wyoming Configuration
-                                </button>
-                            </form>
-                        </div>
-                    </div>
+		</div>
+	</div>
 
-                    <!-- Play URL -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">Play Audio from URL</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <label for="audio-url" class="form-label">Audio URL</label>
-                                <input type="text" class="form-control" id="audio-url" placeholder="https://example.com/audio.wav">
-                                <small class="form-text text-muted">Enter URL to WAV or MP3 audio file</small>
-                            </div>
-                            <button type="button" class="btn btn-success" onclick="playAudioURL()">
-                                <i class="bi bi-play-fill"></i> Play Audio
-                            </button>
-                        </div>
-                    </div>
-
-                </div>
-
-                <!-- Right Column: Interactive Features -->
-                <div class="col-lg-6">
-
-                    <!-- Push-to-Talk -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">Push-to-Talk (Speech-to-Text)</h5>
-                        </div>
-                        <div class="card-body text-center">
-                            <p class="text-muted">Hold the button below to speak</p>
-                            <div class="mb-4">
-                                <button type="button" class="push-to-talk-btn btn btn-primary"
-                                        id="push-to-talk-btn"
-                                        onmousedown="startRecording()"
-                                        onmouseup="stopRecording()"
-                                        ontouchstart="startRecording()"
-                                        ontouchend="stopRecording()">
-                                    🎤
-                                </button>
-                            </div>
-                            <div id="recording-status" class="alert alert-info" style="display:none;">
-                                <strong>Recording...</strong> Speak now!
-                            </div>
-                            <div>
-                                <label class="form-label">Latest Transcription:</label>
-                                <div class="transcript-display" id="transcript-display">
-                                    <em class="text-muted">Press and hold the button to speak...</em>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Text-to-Speech Test -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">Text-to-Speech Test</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <label for="tts-text" class="form-label">Enter Text to Speak</label>
-                                <textarea class="form-control" id="tts-text" rows="3" placeholder="Enter text...">Hello, this is a test of the text-to-speech system.</textarea>
-                            </div>
-                            <button type="button" class="btn btn-primary" onclick="testTTS()">
-                                <i class="bi bi-volume-up-fill"></i> Speak Text
-                            </button>
-                            <div id="tts-status" class="mt-2"></div>
-                        </div>
-                    </div>
-
-                    <!-- Recording History -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="card-title mb-0">Recent Transcriptions</h5>
-                        </div>
-                        <div class="card-body">
-                            <div id="transcript-history" class="list-group">
-                                <div class="list-group-item text-muted text-center">
-                                    No transcriptions yet
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                </div>
-            </div>
-
-        </div>
-    </div>
+	<div class="toast-container position-fixed top-0 end-0 p-3"></div>
 </div>
 
 <script>
-// Global state
 let statusUpdateInterval = null;
-let transcriptHistory = [];
+let lastTranscriptTs = null;
 
 $(document).ready(function() {
-    // Load app info and settings
-    $.ajax({
-        type: "GET",
-        url: 'app',
-        dataType: 'json',
-        cache: false,
-        success: function(app) {
-            document.title = app.manifest.acapPackageConf.setup.friendlyName;
-            $('.sidebar-heading').text(app.manifest.acapPackageConf.setup.friendlyName);
+	$.ajax({
+		type: "GET",
+		url: 'app',
+		dataType: 'json',
+		cache: false,
+		success: function(app) {
+			document.title = app.manifest.acapPackageConf.setup.friendlyName;
+			$('.sidebar-heading').text(app.manifest.acapPackageConf.setup.friendlyName);
+		},
+		error: function(response) {
+			showToast('Failed to load application info: ' + response.statusText, 'danger');
+		}
+	});
 
-            // Load settings
-            if (app.settings) {
-                $('#wyoming-server').val(app.settings.wyoming || '');
-                $('#piper-port').val(app.settings.piper || 10200);
-                $('#whisper-port').val(app.settings.whisper || 10300);
-                $('#language').val(app.settings.language || 'en');
-
-                // Show warning if Wyoming server is not configured
-                if (!app.settings.wyoming || app.settings.wyoming.trim() === '') {
-                    showAlert('warning', 'Please configure the Wyoming server address to use voice features.');
-                }
-            }
-        },
-        error: function(response) {
-            showAlert('danger', 'Failed to load application info: ' + response.statusText);
-        }
-    });
-
-    // Start status updates
-    updateStatus();
-    statusUpdateInterval = setInterval(updateStatus, 2000);
+	updateStatus();
+	updateTranscripts();
+	statusUpdateInterval = setInterval(function() {
+		updateStatus();
+		updateTranscripts();
+	}, 500);
 });
 
-// Wyoming Configuration Form Submit
-$('#wyoming-config-form').submit(function(e) {
-    e.preventDefault();
-
-    const wyomingServer = $('#wyoming-server').val().trim();
-    const piperPort = parseInt($('#piper-port').val());
-    const whisperPort = parseInt($('#whisper-port').val());
-
-    // Validate Wyoming server address
-    if (!wyomingServer) {
-        showAlert('danger', 'Wyoming server address cannot be empty. Please enter a valid IP address.');
-        return;
-    }
-
-    // Validate ports
-    if (isNaN(piperPort) || piperPort < 1 || piperPort > 65535) {
-        showAlert('danger', 'Piper port must be a valid port number (1-65535).');
-        return;
-    }
-
-    if (isNaN(whisperPort) || whisperPort < 1 || whisperPort > 65535) {
-        showAlert('danger', 'Whisper port must be a valid port number (1-65535).');
-        return;
-    }
-
-    const settings = {
-        wyoming: wyomingServer,
-        piper: piperPort,
-        whisper: whisperPort,
-        language: $('#language').val()
-    };
-
-    $.ajax({
-        type: "POST",
-        url: 'settings',
-        contentType: 'application/json',
-        data: JSON.stringify(settings),
-        success: function() {
-            showAlert('success', 'Wyoming configuration saved successfully! The services will attempt to connect.');
-            updateStatus(); // Refresh status
-        },
-        error: function(xhr) {
-            showAlert('danger', 'Failed to save configuration: ' + (xhr.responseText || 'Unknown error'));
-        }
-    });
-});
-
-// Update Status
 function updateStatus() {
-    $.ajax({
-        type: "GET",
-        url: 'status',
-        dataType: 'json',
-        cache: false,
-        success: function(status) {
-            // MQTT Status
-            if (status.mqtt && status.mqtt.connected) {
-                updateStatusItem('status-mqtt', 'ok', status.mqtt.status || 'Connected');
-            } else {
-                updateStatusItem('status-mqtt', 'error', status.mqtt?.status || 'Disconnected');
-            }
+	$.ajax({
+		type: "GET",
+		url: 'status',
+		dataType: 'json',
+		cache: false,
+		success: function(status) {
+			if (status.mqtt && status.mqtt.connected) {
+				updateStatusItem('status-mqtt', 'ok', status.mqtt.status || 'Connected');
+			} else {
+				updateStatusItem('status-mqtt', 'error', status.mqtt?.status || 'Disconnected');
+			}
 
-            // Wyoming Piper Status
-            const piperStatus = status.wyoming?.piper || 'unknown';
-            if (piperStatus === 'connected') {
-                updateStatusItem('status-piper', 'ok', 'Connected');
-            } else if (piperStatus === 'configured') {
-                updateStatusItem('status-piper', 'warning', 'Configured');
-            } else if (piperStatus === 'not configured') {
-                updateStatusItem('status-piper', 'inactive', 'Not Configured');
-            } else {
-                updateStatusItem('status-piper', 'error', piperStatus);
-            }
+			const inputStatus = status.input?.status || 'Unknown';
+			if (status.input?.state) {
+				updateStatusItem('status-input', 'ok', inputStatus);
+			} else {
+				updateStatusItem('status-input', 'error', inputStatus);
+			}
 
-            // Wyoming Whisper Status
-            const whisperStatus = status.wyoming?.whisper || 'unknown';
-            if (whisperStatus === 'connected') {
-                updateStatusItem('status-whisper', 'ok', 'Connected');
-            } else if (whisperStatus === 'configured') {
-                updateStatusItem('status-whisper', 'warning', 'Configured');
-            } else if (whisperStatus === 'not configured') {
-                updateStatusItem('status-whisper', 'inactive', 'Not Configured');
-            } else {
-                updateStatusItem('status-whisper', 'error', whisperStatus);
-            }
+			const engineState = status.stt?.state || 'idle';
+			if (engineState === 'transcribing') {
+				updateStatusItem('status-engine', 'info', 'Transcribing');
+			} else if (engineState === 'listening') {
+				updateStatusItem('status-engine', 'warning', 'Speech detected');
+			} else if (engineState === 'error') {
+				updateStatusItem('status-engine', 'error', 'Error');
+			} else {
+				updateStatusItem('status-engine', 'ok', 'Idle');
+			}
 
-            // Audio Output Status
-            const outputStatus = status.output?.status || 'Unknown';
-            if (outputStatus.includes('Ready') || outputStatus.includes('complete')) {
-                updateStatusItem('status-output', 'ok', outputStatus);
-            } else if (outputStatus.includes('Playing')) {
-                updateStatusItem('status-output', 'info', outputStatus);
-            } else {
-                updateStatusItem('status-output', 'inactive', outputStatus);
-            }
+			$('#status-count').text(status.stt?.count || 0);
+		},
+		error: function() {
+			// Silently fail - don't spam console on network errors
+		}
+	});
+}
 
-            // Update transcript if available
-            if (status.stt && status.stt.last_transcript && status.stt.last_transcript.trim()) {
-                const transcript = status.stt.last_transcript.trim();
-                if ($('#transcript-display em').length > 0 || $('#transcript-display').text().trim() !== transcript) {
-                    $('#transcript-display').html('<strong>' + escapeHtml(transcript) + '</strong>');
-                    addTranscriptToHistory(transcript);
-                }
-            }
-        },
-        error: function() {
-            // Silently fail - don't spam console on network errors
-        }
-    });
+function updateTranscripts() {
+	$.ajax({
+		type: "GET",
+		url: 'transcripts',
+		dataType: 'json',
+		cache: false,
+		success: function(entries) {
+			if (!entries || entries.length === 0) {
+				lastTranscriptTs = null;
+				$('#transcript-list').html('<div class="ps-3 pe-3 pt-3 pb-3 text-muted text-center">No transcripts yet.</div>');
+				return;
+			}
+
+			// Avoid re-rendering when nothing new has arrived
+			if (lastTranscriptTs !== null && entries[0].ts === lastTranscriptTs) {
+				return;
+			}
+			lastTranscriptTs = entries[0].ts;
+
+			const html = entries.map(function(e) {
+				const durationMs = Number.isFinite(e.duration_ms) ? e.duration_ms : 0;
+				const durationLabel = durationMs > 0 ? (durationMs + ' ms') : '-';
+				const ignoredBadge = e.ignored ? '<span class="badge bg-warning text-dark ms-2">Ignored</span>' : '';
+				return '<div class="list-group-item">' +
+					'<div class="d-flex justify-content-between align-items-start">' +
+					'<div>' + escapeHtml(e.text) + ignoredBadge + '</div>' +
+					'<span class="badge bg-secondary ms-2">' + escapeHtml(e.language) + '</span>' +
+					'</div>' +
+					'<small class="text-muted">' + formatTimestamp(e.ts) + ' | transcription: ' + escapeHtml(durationLabel) + '</small>' +
+					'</div>';
+			}).join('');
+
+			$('#transcript-list').html(html);
+		},
+		error: function() {
+			// Silently fail - don't spam console on network errors
+		}
+	});
+}
+
+function clearTranscripts() {
+	$.ajax({
+		type: 'DELETE',
+		url: 'transcripts',
+		success: function() {
+			lastTranscriptTs = null;
+			$('#transcript-list').html('<div class="ps-3 pe-3 pt-3 pb-3 text-muted text-center">No transcripts yet.</div>');
+			$('#status-count').text('0');
+			showToast('Transcript history cleared.', 'success');
+		},
+		error: function(xhr) {
+			showToast('Failed to clear transcripts: ' + (xhr.responseText || 'Unknown error'), 'danger');
+		}
+	});
 }
 
 function updateStatusItem(elementId, statusClass, text) {
-    const element = $('#' + elementId);
-    element.find('.status-indicator')
-        .removeClass('status-ok status-warning status-error status-info status-inactive')
-        .addClass('status-' + statusClass);
-    element.find('span:last').text(text);
+	const bgMap = { ok: 'bg-success', warning: 'bg-warning', error: 'bg-danger', info: 'bg-info', inactive: 'bg-secondary' };
+	$('#' + elementId)
+		.text(text)
+		.removeClass('bg-success bg-warning bg-danger bg-info bg-secondary')
+		.addClass(bgMap[statusClass] || 'bg-secondary');
 }
 
-// Push-to-Talk Functions
-function startRecording() {
-    $('#push-to-talk-btn').addClass('recording');
-    $('#recording-status').show();
-
-    $.ajax({
-        type: "POST",
-        url: 'listen_start',
-        success: function() {
-            console.log('Listening started');
-        },
-        error: function(xhr) {
-            showAlert('danger', 'Failed to start listening: ' + (xhr.responseText || 'Unknown error'));
-            $('#push-to-talk-btn').removeClass('recording');
-            $('#recording-status').hide();
-        }
-    });
-}
-
-function stopRecording() {
-    $('#push-to-talk-btn').removeClass('recording');
-    $('#recording-status').hide();
-
-    $.ajax({
-        type: "POST",
-        url: 'listen_stop',
-        success: function() {
-            console.log('Listening stopped');
-            // Status will be updated by the polling interval
-        },
-        error: function(xhr) {
-            showAlert('danger', 'Failed to stop listening: ' + (xhr.responseText || 'Unknown error'));
-        }
-    });
-}
-
-// Test TTS
-function testTTS() {
-    const text = $('#tts-text').val().trim();
-    if (!text) {
-        showAlert('warning', 'Please enter text to speak');
-        return;
-    }
-
-    // Check if Wyoming server is configured
-    const wyomingServer = $('#wyoming-server').val().trim();
-    if (!wyomingServer) {
-        $('#tts-status').html('<div class="alert alert-warning">Please configure the Wyoming server address first.</div>');
-        return;
-    }
-
-    $('#tts-status').html('<div class="alert alert-info">Sending to TTS...</div>');
-
-    $.ajax({
-        type: "POST",
-        url: 'speak',
-        contentType: 'application/json',
-        data: JSON.stringify({ text: text }),
-        success: function() {
-            $('#tts-status').html('<div class="alert alert-success">TTS request sent! Audio will play shortly.</div>');
-            setTimeout(function() { $('#tts-status').empty(); }, 3000);
-        },
-        error: function(xhr) {
-            $('#tts-status').html('<div class="alert alert-danger">Failed: ' + (xhr.responseText || 'Unknown error') + '</div>');
-        }
-    });
-}
-
-// Play Audio URL
-function playAudioURL() {
-    const url = $('#audio-url').val().trim();
-    if (!url) {
-        showAlert('warning', 'Please enter an audio URL');
-        return;
-    }
-
-    $.ajax({
-        type: "POST",
-        url: 'playback',
-        contentType: 'application/json',
-        data: JSON.stringify({ url: url }),
-        success: function() {
-            showAlert('success', 'Audio playback started!');
-        },
-        error: function(xhr) {
-            showAlert('danger', 'Failed to play audio: ' + (xhr.responseText || 'Unknown error'));
-        }
-    });
-}
-
-// Transcript History
-function addTranscriptToHistory(transcript) {
-    // Avoid duplicates
-    if (transcriptHistory.length > 0 && transcriptHistory[0] === transcript) {
-        return;
-    }
-
-    transcriptHistory.unshift(transcript);
-    if (transcriptHistory.length > 5) {
-        transcriptHistory.pop();
-    }
-
-    const historyHtml = transcriptHistory.map((t, i) =>
-        '<div class="list-group-item">' +
-        '<small class="text-muted">#' + (i + 1) + '</small> ' +
-        escapeHtml(t) +
-        '</div>'
-    ).join('');
-
-    $('#transcript-history').html(historyHtml);
-}
-
-// Utility Functions
-function showAlert(type, message) {
-    const alertHtml = '<div class="alert alert-' + type + ' alert-dismissible fade show" role="alert">' +
-        message +
-        '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
-        '</div>';
-
-    // Insert at top of page content
-    $('#page-content-wrapper .container-fluid').prepend(alertHtml);
-
-    // Auto-dismiss after 5 seconds
-    setTimeout(function() {
-        $('.alert').alert('close');
-    }, 5000);
+function formatTimestamp(ts) {
+	const d = new Date(ts);
+	return d.toLocaleString();
 }
 
 function escapeHtml(text) {
-    const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-    };
-    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+	const map = {
+		'&': '&amp;',
+		'<': '&lt;',
+		'>': '&gt;',
+		'"': '&quot;',
+		"'": '&#039;'
+	};
+	return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
 }
 
-// Cleanup on page unload
 $(window).on('beforeunload', function() {
-    if (statusUpdateInterval) {
-        clearInterval(statusUpdateInterval);
-    }
+	if (statusUpdateInterval) {
+		clearInterval(statusUpdateInterval);
+	}
+});
+
+$('#clear-transcripts').on('click', function() {
+	clearTranscripts();
 });
 </script>
 </body>

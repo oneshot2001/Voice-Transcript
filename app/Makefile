@@ -1,11 +1,13 @@
 PROG1	= voice
-OBJS1	= main.c ACAP.c cJSON.c pipewire_audio.c wyoming.c MQTT.c CERTS.c
+OBJS1	= main.c ACAP.c cJSON.c pipewire_audio.c MQTT.c CERTS.c whisper_stt.c wyoming.c
 PROGS	= $(PROG1)
 
-PKGS = glib-2.0 gio-2.0 axevent fcgi libcurl libpipewire-0.3 
+PKGS = glib-2.0 gio-2.0 axevent fcgi libcurl libpipewire-0.3
 
 CFLAGS += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(PKGS))
+CFLAGS += -Iwhisper/include
 LDLIBS += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(PKGS))
+LDLIBS += -Lwhisper/lib -lwhisper -lggml -lggml-cpu -lggml-base -lstdc++
 LDLIBS  += -s -lm -ldl -lpthread
 
 all:	$(PROGS)

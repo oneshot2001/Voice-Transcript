@@ -1,6 +1,24 @@
 {
-    "wyoming": "",
-    "piper": 10200,
-    "whisper": 10300,
-    "language": "en"
+    "transcription_use_case": "continuous",
+    "stt_mode": "internal",
+    "model": "base",
+    "wyoming_host": "",
+    "wyoming_whisper_port": 10300,
+    "enabled": true,
+    "command_keywords": "",
+    "input_node": "AudioDevice0Input0",
+    "language": "auto",
+    "translate": false,
+    "sensitivity": "normal",
+    "silence_timeout_ms": 650,
+    "min_speech_ms": 250,
+    "max_utterance_sec": 8,
+    "inference_threads": 3,
+    "max_tokens": 48,
+    "wizard_environment": "office",
+    "wizard_goal": "quality",
+    "wizard_sporadic_noise": "moderate",
+    "wizard_validation_rounds": 3,
+    "wizard_background_rounds": 3,
+    "wizard_distance_rounds": 3
 }

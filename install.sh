@@ -1,78 +1,51 @@
-#!/bin/bash
-#
-# Install Voice ACAP to Axis speaker
-# Usage: ./install.sh
-#
+#!/usr/bin/env python3
 
-# Configuration
-DEVICE="speaker.internal"
-USERNAME="nodered"
-PASSWORD="rednode"
-UPLOAD_URL="http://${DEVICE}/axis-cgi/applications/upload.cgi"
+import sys
+import subprocess
+import glob
+import os
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+def main():
+    if len(sys.argv) not in (4, 5):
+        print(f"Usage: python {sys.argv[0]} <address> <user> <password> [aarch64|armv7hf]", file=sys.stderr)
+        sys.exit(1)
 
-echo "========================================="
-echo "Voice ACAP Installation Script"
-echo "========================================="
-echo "Target device: ${DEVICE}"
-echo "Upload URL: ${UPLOAD_URL}"
-echo ""
+    camera_host = sys.argv[1]
+    username = sys.argv[2]
+    password = sys.argv[3]
+    arch = sys.argv[4] if len(sys.argv) == 5 else None
 
-# Find .eap file
-echo "Searching for .eap file..."
-EAP_FILE=$(ls -1 Voice_*_armv7hf.eap 2>/dev/null | head -1)
+    if arch and arch not in ("aarch64", "armv7hf"):
+        print("ERROR: Architecture must be 'aarch64' or 'armv7hf'", file=sys.stderr)
+        sys.exit(1)
 
-if [ -z "$EAP_FILE" ]; then
-    echo -e "${RED}ERROR: No Voice .eap file found in current directory${NC}"
-    echo "Expected file pattern: Voice_*_armv7hf.eap"
-    exit 1
-fi
+    pattern = f"*_{arch}.eap" if arch else "*.eap"
+    eap_files = sorted(glob.glob(pattern), key=lambda path: os.path.getmtime(path), reverse=True)
+    if not eap_files:
+        print(f"ERROR: No .eap file found matching {pattern}", file=sys.stderr)
+        sys.exit(1)
+    if not arch and len(eap_files) > 1:
+        print("ERROR: Multiple .eap files found; specify architecture: aarch64 or armv7hf", file=sys.stderr)
+        for eap in eap_files:
+            print(f"  {eap}", file=sys.stderr)
+        sys.exit(1)
 
-echo -e "${GREEN}Found: ${EAP_FILE}${NC}"
-FILE_SIZE=$(du -h "$EAP_FILE" | cut -f1)
-echo "File size: ${FILE_SIZE}"
-echo ""
+    eap_file = eap_files[0]
+    print(f"Installing {eap_file} to {camera_host}...")
 
-# Upload using curl with digest authentication
-echo "Uploading to ${DEVICE}..."
-echo ""
+    # Upload using curl with digest authentication
+    result = subprocess.run([
+        "curl", "--digest",
+        "-u", f"{username}:{password}",
+        "-F", f"packfil=@{eap_file};type=application/octet-stream",
+        f"http://{camera_host}/axis-cgi/applications/upload.cgi"
+    ])
 
-RESPONSE=$(curl -s -w "\n%{http_code}" \
-    --digest -u "${USERNAME}:${PASSWORD}" \
-    -F "packfil=@${EAP_FILE};type=application/octet-stream" \
-    "${UPLOAD_URL}")
+    if result.returncode != 0:
+        print("ERROR: Upload failed", file=sys.stderr)
+        sys.exit(result.returncode)
 
-# Split response into body and status code
-HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
-BODY=$(echo "$RESPONSE" | sed '$d')
+    print("\nDone.")
 
-echo "HTTP Status: ${HTTP_CODE}"
-echo ""
-
-if [ "$HTTP_CODE" = "200" ]; then
-    echo -e "${GREEN}✓ Upload successful!${NC}"
-    echo ""
-    echo "Response:"
-    echo "$BODY"
-    echo ""
-    echo -e "${GREEN}Installation complete!${NC}"
-    echo ""
-    echo "You can now:"
-    echo "  • Check status: curl --digest -u ${USERNAME}:${PASSWORD} http://${DEVICE}/local/voice/status"
-    echo "  • Test Wyoming: curl --digest -u ${USERNAME}:${PASSWORD} 'http://${DEVICE}/local/voice/test_wyoming?service=piper'"
-    echo "  • Test TTS:     curl -X POST -H 'Content-Type: application/json' --digest -u ${USERNAME}:${PASSWORD} 'http://${DEVICE}/local/voice/speak' -d '{\"text\":\"Hej från röstassistenten\"}'"
-    echo ""
-    exit 0
-else
-    echo -e "${RED}✗ Upload failed with HTTP status: ${HTTP_CODE}${NC}"
-    echo ""
-    echo "Response:"
-    echo "$BODY"
-    echo ""
-    exit 1
-fi
+if __name__ == "__main__":
+    main()
