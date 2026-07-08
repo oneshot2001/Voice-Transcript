@@ -14,6 +14,14 @@ Primary goals:
 
 Avoid adding unrelated product surfaces unless explicitly requested.
 
+## ACAP SDK Reference
+
+For general ACAP SDK architecture and base project patterns, use the base ACAP repository:
+
+- https://github.com/pandosme/make_acap
+
+See the `doc/` subdirectory there for SDK architecture and foundational ACAP guidance.
+
 ## Current Architecture
 
 ## Runtime pipeline
