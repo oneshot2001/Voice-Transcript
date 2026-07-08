@@ -194,10 +194,77 @@ If `stt_mode=external`, configure:
 - `wyoming_host`
 - `wyoming_whisper_port`
 
+### Install and run Wyoming Whisper (base model)
+
+Install on the external server:
+
+```bash
+python3 -m pip install -U wyoming-faster-whisper
+```
+
+Run a common base-model service (CPU-friendly default):
+
+```bash
+python3 -m wyoming_faster_whisper \
+  --uri tcp://0.0.0.0:10300 \
+  --data-dir ~/assistant/whisper \
+  --model base \
+  --language en \
+  --device cpu \
+  --compute-type int8 \
+  --beam-size 1
+```
+
+Typical alternatives:
+
+- Use `--language sv` (or other language code) to lock transcription language.
+- Use `--language` omitted for auto language handling on server side.
+- Use `--device cuda --compute-type float16` for higher throughput on NVIDIA GPU hosts.
+
+Then set in ACAP configuration:
+
+- `stt_mode = external`
+- `wyoming_host = <server-hostname-or-ip>`
+- `wyoming_whisper_port = 10300`
+
+More detailed Wyoming Whisper options and deployment guidance:
+
+- https://github.com/rhasspy/wyoming-faster-whisper
+
 Recommended service package versions:
 
 - `wyoming-faster-whisper>=3.3.1`
 - `wyoming-piper>=2.2.2` (if TTS services are also running on same host)
+
+## Internal vs External Whisper
+
+### Internal Whisper (`stt_mode=internal`)
+
+Pros:
+
+- No additional servers or network dependencies.
+- Simplest deployment and maintenance.
+- Better resilience in isolated/offline environments.
+
+Cons:
+
+- Limited by camera/hub compute resources.
+- Lower maximum throughput for concurrent or heavy workloads.
+- Less flexibility for large model variants.
+
+### External Whisper (`stt_mode=external`)
+
+Pros:
+
+- Higher performance on dedicated CPU/GPU servers.
+- Better for high-rate or multi-device transcription workloads.
+- Easier to scale model/runtime independently of ACAP package.
+
+Cons:
+
+- Requires additional server setup/operations.
+- Depends on network stability and server availability.
+- Adds infrastructure complexity (service supervision, updates, monitoring).
 
 ## Continuous Listening Toggle
 

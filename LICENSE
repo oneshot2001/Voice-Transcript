@@ -68,11 +68,6 @@ and libraries. Their licenses remain with their respective owners.
 	- License: MIT
 	- Source: https://jquery.org/license/
 
-- media-stream-player (`app/html/js/media-stream-player.min.js`)
-	- Copyright (c) Axis Communications AB and contributors
-	- License: MIT
-	- Source: https://github.com/AxisCommunications/media-stream-player-js
-
 Eclipse Public License v2.0 / Eclipse Distribution License v1.0 components are
 used under those licenses. The license texts are available at
 https://www.eclipse.org/legal/epl-2.0/ and
