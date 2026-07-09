@@ -73,6 +73,7 @@ static char g_wizard_goal[16] = "quality";
 static char g_wizard_sporadic_noise[16] = "moderate";
 static char g_transcription_use_case[24] = "continuous";
 static char g_command_keywords[512] = "";
+static int g_command_min_words = 3;
 static GPtrArray *g_command_keywords_normalized = NULL;
 static int g_wizard_validation_rounds = 3;
 static int g_wizard_background_rounds = 3;
@@ -108,13 +109,15 @@ is_allowed_input_node(const char *node) {
 static char *
 normalize_token(const char *text) {
     if (!text) return g_strdup("");
-    char *tmp = g_ascii_strdown(text, -1);
+    char *tmp = g_utf8_casefold(text, -1);
     GString *out = g_string_new(NULL);
-    for (size_t i = 0; tmp[i]; i++) {
-        unsigned char ch = (unsigned char)tmp[i];
-        if (g_ascii_isalnum(ch)) {
-            g_string_append_c(out, (char)ch);
+    const char *p = tmp;
+    while (*p) {
+        gunichar ch = g_utf8_get_char(p);
+        if (g_unichar_isalnum(ch)) {
+            g_string_append_unichar(out, ch);
         }
+        p = g_utf8_next_char(p);
     }
     g_free(tmp);
     return g_string_free(out, FALSE);
@@ -125,9 +128,10 @@ count_words(const char *text) {
     if (!text || !text[0]) return 0;
     int words = 0;
     gboolean in_word = FALSE;
-    for (size_t i = 0; text[i]; i++) {
-        unsigned char ch = (unsigned char)text[i];
-        if (g_ascii_isalnum(ch)) {
+    const char *p = text;
+    while (*p) {
+        gunichar ch = g_utf8_get_char(p);
+        if (g_unichar_isalnum(ch)) {
             if (!in_word) {
                 words++;
                 in_word = TRUE;
@@ -135,6 +139,7 @@ count_words(const char *text) {
         } else {
             in_word = FALSE;
         }
+        p = g_utf8_next_char(p);
     }
     return words;
 }
@@ -470,16 +475,27 @@ resolve_model_from_settings(cJSON *settings) {
 
 static void
 resolve_stt_backend_from_settings(cJSON *settings, const char *language) {
+#ifdef EXTERNAL_ONLY_BUILD
+    g_strlcpy(g_stt_mode, "external", sizeof(g_stt_mode));
+#else
     g_strlcpy(g_stt_mode, "internal", sizeof(g_stt_mode));
+#endif
     g_wyoming_host[0] = '\0';
     g_wyoming_whisper_port = 10300;
 
     if (settings && cJSON_IsObject(settings)) {
         cJSON *mode = cJSON_GetObjectItem(settings, "stt_mode");
         if (mode && cJSON_IsString(mode) && mode->valuestring && mode->valuestring[0]) {
+#ifdef EXTERNAL_ONLY_BUILD
+            if (g_strcmp0(mode->valuestring, "external") != 0) {
+                LOG_WARN("External-only build ignores stt_mode='%s' and forces external backend\n", mode->valuestring);
+            }
+            g_strlcpy(g_stt_mode, "external", sizeof(g_stt_mode));
+#else
             if (g_strcmp0(mode->valuestring, "external") == 0) {
                 g_strlcpy(g_stt_mode, "external", sizeof(g_stt_mode));
             }
+#endif
         }
 
         cJSON *host = cJSON_GetObjectItem(settings, "wyoming_host");
@@ -494,6 +510,9 @@ resolve_stt_backend_from_settings(cJSON *settings, const char *language) {
     }
 
     ACAP_STATUS_SetString("stt", "backend", g_stt_mode);
+#ifdef EXTERNAL_ONLY_BUILD
+    ACAP_STATUS_SetBool("stt", "external_only_build", TRUE);
+#endif
 
     const char *wyoming_language = language;
     if (!wyoming_language || g_strcmp0(wyoming_language, "auto") == 0) {
@@ -639,6 +658,11 @@ apply_settings(cJSON *data) {
     if ((item = cJSON_GetObjectItem(data, "command_keywords")) && cJSON_IsString(item) && item->valuestring) {
         g_strlcpy(g_command_keywords, item->valuestring, sizeof(g_command_keywords));
     }
+    if ((item = cJSON_GetObjectItem(data, "command_min_words")) && cJSON_IsNumber(item)) {
+        g_command_min_words = item->valueint;
+    }
+    if (g_command_min_words < 1) g_command_min_words = 1;
+    if (g_command_min_words > 5) g_command_min_words = 5;
     if ((item = cJSON_GetObjectItem(data, "input_node")) && cJSON_IsString(item) && item->valuestring[0]) {
         const char *normalized = normalize_input_node(item->valuestring);
         if (g_strcmp0(normalized, item->valuestring) != 0) {
@@ -689,6 +713,7 @@ apply_settings(cJSON *data) {
     ACAP_STATUS_SetString("input", "selected_node", g_input_node);
     ACAP_STATUS_SetString("stt", "use_case", g_transcription_use_case);
     ACAP_STATUS_SetString("stt", "command_keywords", g_command_keywords);
+    ACAP_STATUS_SetNumber("stt", "command_min_words", g_command_min_words);
     ACAP_STATUS_SetNumber("stt", "command_keyword_count", g_command_keywords_normalized ? (double)g_command_keywords_normalized->len : 0.0);
     ACAP_STATUS_SetString("wizard", "environment", g_wizard_environment);
     ACAP_STATUS_SetString("wizard", "goal", g_wizard_goal);
@@ -804,7 +829,7 @@ publish_transcript_entry(const char *clean_text, const char *safe_language, int 
         return;
     }
 
-    const char *topic = (g_strcmp0(g_transcription_use_case, "voice_commands") == 0) ? "voice/command" : "voice/transcription";
+    const char *topic = (g_strcmp0(g_transcription_use_case, "voice_commands") == 0) ? "command" : "transcription";
 
     cJSON *payload = cJSON_CreateObject();
     cJSON_AddStringToObject(payload, "language", safe_language);
@@ -840,8 +865,9 @@ Whisper_Transcript_Callback(const char *text, const char *language, int decode_m
         }
 
         int words = count_words(clean);
-        if (words < 3) {
-            LOG("Transcript filtered (%s): too short (%d words) -> %s\n", safe_language, words, clean);
+        int min_words_required = (g_strcmp0(g_transcription_use_case, "voice_commands") == 0) ? g_command_min_words : 3;
+        if (words < min_words_required) {
+            LOG("Transcript filtered (%s): too short (%d words, min=%d) -> %s\n", safe_language, words, min_words_required, clean);
             g_free(clean);
             continue;
         }
@@ -1161,6 +1187,7 @@ int main(void) {
     ACAP_STATUS_SetString("stt", "backend", g_stt_mode);
     ACAP_STATUS_SetString("stt", "use_case", g_transcription_use_case);
     ACAP_STATUS_SetString("stt", "command_keywords", g_command_keywords);
+    ACAP_STATUS_SetNumber("stt", "command_min_words", g_command_min_words);
     ACAP_STATUS_SetNumber("stt", "command_keyword_count", 0);
     ACAP_STATUS_SetString("wyoming", "whisper", "disconnected");
     ACAP_STATUS_SetString("wizard", "environment", g_wizard_environment);

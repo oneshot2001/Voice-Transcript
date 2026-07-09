@@ -6,6 +6,7 @@
     "wyoming_whisper_port": 10300,
     "enabled": true,
     "command_keywords": "",
+    "command_min_words": 3,
     "input_node": "AudioDevice0Input0",
     "language": "auto",
     "translate": false,

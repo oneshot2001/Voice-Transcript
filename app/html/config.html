@@ -29,7 +29,7 @@
 					<div class="card">
 						<div class="card-header d-flex justify-content-between align-items-center">
 							<h5 class="card-title mb-0">Transcription Engine</h5>
-							<button type="button" class="btn btn-sm btn-outline-primary" id="open-optimization-wizard">Optimization Wizard</button>
+							<button type="button" class="btn btn-sm btn-outline-primary" id="open-optimization-wizard">Calibration Assistant</button>
 						</div>
 						<div class="card-body">
 							<form id="config-form">
@@ -106,7 +106,13 @@
 								<div class="mb-3 d-none" id="voice-command-keywords-section">
 									<label for="command_keywords" class="form-label">Command Keywords</label>
 									<input type="text" class="form-control" id="command_keywords" placeholder="light, lights, garage, gate">
-									<div class="form-text">Comma-separated. In Voice Commands mode, transcripts shorter than 3 words are ignored and at least one keyword must match (fuzzy singular/plural tolerant).</div>
+									<div class="form-text">Comma-separated. At least one keyword must match (fuzzy singular/plural tolerant).</div>
+								</div>
+
+								<div class="mb-3 d-none" id="voice-command-min-words-section">
+									<label for="command_min_words" class="form-label">Minimum Command Words</label>
+									<input type="number" class="form-control" id="command_min_words" min="1" max="5" step="1" value="3">
+									<div class="form-text">Only used in Voice Commands mode. Range 1-5 (default 3).</div>
 								</div>
 
 								<div class="mb-3">
@@ -172,13 +178,14 @@
 				<div class="col-lg-6">
 					<div class="card h-100">
 						<div class="card-header">
-							<h5 class="card-title mb-0">Wizard Guidance</h5>
+							<h5 class="card-title mb-0">Calibration Guidance</h5>
 						</div>
 						<div class="card-body">
-							<p class="text-muted mb-2">Use the Optimization Wizard to validate microphone setup and tune detection/transcription behavior for your use case.</p>
+							<p class="text-muted mb-2">Use the Calibration Assistant to tune microphone gain first, then optimize detection/transcription behavior for your use case.</p>
 							<ul class="small text-muted mb-0">
-								<li>Microphone validation (near and far distance)</li>
+								<li>Read and tune live input gain (processed path)</li>
 								<li>Background noise profiling</li>
+								<li>Near speech test for signal-to-noise evaluation</li>
 								<li>Use-case tuning for speed/quality/false trigger control</li>
 								<li>Final decision: Ignore or apply recommended settings</li>
 							</ul>
@@ -196,7 +203,7 @@
 	<div class="modal-dialog modal-lg modal-dialog-scrollable">
 		<div class="modal-content">
 			<div class="modal-header">
-				<h5 class="modal-title">Transcription Optimization Wizard</h5>
+				<h5 class="modal-title">Transcription Calibration Assistant</h5>
 				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 			</div>
 			<div class="modal-body">
@@ -211,6 +218,8 @@
 				<p class="text-muted mb-3" id="wizard-step-reason"></p>
 				<div id="wizard-step-content" class="mb-3"></div>
 				<div class="border rounded p-3 small">
+					<div><strong>Current Gain:</strong> <span id="wizard-current-gain">-</span></div>
+					<div><strong>Recommended Gain:</strong> <span id="wizard-recommended-gain">-</span></div>
 					<div><strong>Live RMS:</strong> <span id="wizard-live-rms">0.000000</span></div>
 					<div><strong>Live Peak:</strong> <span id="wizard-live-peak">0.000000</span></div>
 					<div><strong>Background Average:</strong> <span id="wizard-noise-avg">0.000000</span></div>
@@ -238,6 +247,13 @@ const wizardState = {
 	stepIndex: 0,
 	originalSettings: null,
 	recommendedSettings: null,
+	axis: {
+		channelRef: null,
+		currentGain: null,
+		recommendedGain: null,
+		gainMin: -60,
+		gainMax: 60
+	},
 	profile: {
 		environment: 'office',
 		goal: 'quality',
@@ -263,9 +279,9 @@ const wizardState = {
 
 const wizardSteps = [
 	{
-		title: '1. Validate Microphone Path',
-		reason: 'Confirms the processed microphone is alive before any optimization. This protects against tuning a broken input path.',
-		html: '<p class="small text-muted mb-2">Speak clearly near the camera and say <strong>"one two three"</strong> several times. Then click <strong>Run Check</strong>.</p><button class="btn btn-sm btn-outline-primary" id="wizard-action-validate">Run Check</button><div class="small text-muted mt-2">Validation checks sample flow and live levels.</div>'
+		title: '1. Read Processed Input Gain',
+		reason: 'Gain-first calibration prevents tuning VAD/transcription around a weak or overdriven audio path.',
+		html: '<p class="small text-muted mb-2">Load current gain from the camera processed input (AudioDevice0Input0), then sample near speech for baseline.</p><button class="btn btn-sm btn-outline-primary me-2" id="wizard-action-read-gain">Read Gain</button><button class="btn btn-sm btn-outline-primary" id="wizard-action-near">Sample Near Speech</button><div class="small text-muted mt-2">Near speech phrase: <strong>"testing audio transcriptions"</strong>.</div>'
 	},
 	{
 		title: '2. Understand Background Noise',
@@ -278,21 +294,186 @@ const wizardSteps = [
 		html: '<div class="mb-2"><label class="form-label small">Common environment</label><select id="wizard-environment" class="form-select form-select-sm"><option value="quiet">Quiet room</option><option value="office" selected>Office / home office</option><option value="busy">Busy / public area</option><option value="outdoor">Outdoor / variable noise</option></select></div><div class="mb-2"><label class="form-label small">Sporadic sounds (doors, clanks, clicks)</label><select id="wizard-sporadic" class="form-select form-select-sm"><option value="low">Low</option><option value="moderate" selected>Moderate</option><option value="high">High</option></select></div><div class="row g-2"><div class="col-sm-4"><label class="form-label small">Validation rounds</label><input id="wizard-rounds-validation" class="form-control form-control-sm" type="number" min="1" max="8" step="1"></div><div class="col-sm-4"><label class="form-label small">Background rounds</label><input id="wizard-rounds-background" class="form-control form-control-sm" type="number" min="1" max="8" step="1"></div><div class="col-sm-4"><label class="form-label small">Distance rounds</label><input id="wizard-rounds-distance" class="form-control form-control-sm" type="number" min="1" max="8" step="1"></div></div>'
 	},
 	{
-		title: '4. Near vs Far Detection (3-6m)',
-		reason: 'Compares close-talk and distance speech to tune VAD sensitivity and minimum speech duration.',
-		html: '<p class="small text-muted mb-2">First stand close to the mic and say <strong>"testing audio transcriptions"</strong>, then click Near Test.</p><button class="btn btn-sm btn-outline-primary me-2" id="wizard-action-near">Near Test</button><button class="btn btn-sm btn-outline-primary" id="wizard-action-far">Far Test (3-6m)</button>'
-	},
-	{
-		title: '5. Use-Case Goal',
+		title: '4. Use-Case Goal',
 		reason: 'Each goal needs different tradeoffs between speed, transcript quality, and false-trigger resistance.',
-		html: '<label class="form-label small">Primary optimization target</label><select id="wizard-goal" class="form-select form-select-sm"><option value="continuous">Continuous transcription</option><option value="speed">Fast response speed</option><option value="quality" selected>Highest transcript quality</option><option value="strict">Ignore sporadic sounds / stricter trigger</option><option value="balanced">Balanced quality + latency</option></select><div class="small text-muted mt-2">TTS challenge note: if using external TTS later, higher noise suppression usually improves transcript-to-speech coherence.</div>'
+		html: '<label class="form-label small">Primary optimization target</label><select id="wizard-goal" class="form-select form-select-sm"><option value="continuous">Continuous transcription</option><option value="speed">Fast response speed</option><option value="quality" selected>Highest transcript quality</option><option value="strict">Ignore sporadic sounds / stricter trigger</option><option value="balanced">Balanced quality + latency</option></select><div class="small text-muted mt-2">Calibration computes gain recommendation from near speech and background levels before applying profile tuning.</div>'
 	},
 	{
-		title: '6. Final Recommendation',
-		reason: 'Shows calculated settings based on microphone checks, VAD behavior, noise profile, and speed/quality target.',
+		title: '5. Final Recommendation',
+		reason: 'Shows calculated gain and settings based on microphone checks, noise profile, and speed/quality target.',
 		html: '<p class="small text-muted mb-0">Review recommendations below, then choose <strong>Ignore</strong> or <strong>Use Recommended Settings</strong>.</p>'
 	}
 ];
+
+function axisApiRequest(url, method, params, apiVersion) {
+	const payload = {
+		apiVersion: apiVersion || '1.0',
+		method: method
+	};
+	if (params && typeof params === 'object') {
+		payload.params = params;
+	}
+	return $.ajax({
+		type: 'POST',
+		url: url,
+		contentType: 'application/json',
+		dataType: 'json',
+		cache: false,
+		data: JSON.stringify(payload)
+	});
+}
+
+function numericFromAny() {
+	for (let i = 0; i < arguments.length; i++) {
+		const value = Number(arguments[i]);
+		if (Number.isFinite(value)) return value;
+	}
+	return null;
+}
+
+function clamp(v, min, max) {
+	return Math.max(min, Math.min(max, v));
+}
+
+function extractPrimaryInputChannel(devices) {
+	if (!Array.isArray(devices)) return null;
+	for (const device of devices) {
+		const inputs = Array.isArray(device?.inputs) ? device.inputs : [];
+		for (const input of inputs) {
+			const connections = Array.isArray(input?.connectionTypes) ? input.connectionTypes : [];
+			for (const connection of connections) {
+				const signalingTypes = Array.isArray(connection?.signalingTypes) ? connection.signalingTypes : [];
+				for (const signaling of signalingTypes) {
+					const channels = Array.isArray(signaling?.channels) ? signaling.channels : [];
+					for (const channel of channels) {
+						const gain = numericFromAny(channel?.gain, channel?.Gain);
+						if (gain === null) continue;
+						return {
+							deviceId: String(device.id),
+							inputId: String(input.id),
+							connectionId: String(connection.id),
+							signalingId: String(signaling.id),
+							channelId: String(channel.id),
+							gain: gain,
+							gainMin: numericFromAny(channel?.gainMin, channel?.minGain, channel?.min),
+							gainMax: numericFromAny(channel?.gainMax, channel?.maxGain, channel?.max)
+						};
+					}
+				}
+			}
+		}
+	}
+	return null;
+}
+
+function resolveGainRange(currentGain, channelGainMin, channelGainMax) {
+	let gainMin = numericFromAny(channelGainMin);
+	let gainMax = numericFromAny(channelGainMax);
+	if (!Number.isFinite(gainMin) || !Number.isFinite(gainMax) || gainMax <= gainMin) {
+		if (currentGain >= -60 && currentGain <= 60) {
+			gainMin = -60;
+			gainMax = 60;
+		} else {
+			gainMin = 0;
+			gainMax = 100;
+		}
+	}
+	return { gainMin, gainMax };
+}
+
+function syncGainLabels() {
+	$('#wizard-current-gain').text(wizardState.axis.currentGain == null ? '-' : String(wizardState.axis.currentGain));
+	$('#wizard-recommended-gain').text(wizardState.axis.recommendedGain == null ? '-' : String(wizardState.axis.recommendedGain));
+}
+
+async function readCurrentInputGain() {
+	if (wizardState.runningAction) return;
+	wizardState.runningAction = true;
+	setWizardStatus('Reading Gain', 'bg-info');
+	try {
+		const res = await axisApiRequest('/axis-cgi/audiodevicecontrol.cgi', 'getDevicesSettings');
+		const devices = Array.isArray(res?.data?.devices) ? res.data.devices : (Array.isArray(res?.devices) ? res.devices : []);
+		const channelRef = extractPrimaryInputChannel(devices);
+		if (!channelRef) {
+			throw new Error('No channel with gain found');
+		}
+		const range = resolveGainRange(channelRef.gain, channelRef.gainMin, channelRef.gainMax);
+		wizardState.axis.channelRef = channelRef;
+		wizardState.axis.currentGain = channelRef.gain;
+		wizardState.axis.gainMin = range.gainMin;
+		wizardState.axis.gainMax = range.gainMax;
+		wizardState.axis.recommendedGain = null;
+		syncGainLabels();
+		setWizardStatus('Gain Loaded', 'bg-success');
+		showToast('Current processed input gain loaded.', 'success');
+	} catch (e) {
+		setWizardStatus('Gain Unavailable', 'bg-warning');
+		showToast('Unable to read current input gain from camera.', 'warning');
+	} finally {
+		wizardState.runningAction = false;
+	}
+}
+
+function buildGainUpdatePayload(channelRef, gain) {
+	return {
+		devices: [{
+			id: channelRef.deviceId,
+			inputs: [{
+				id: channelRef.inputId,
+				connectionTypes: [{
+					id: channelRef.connectionId,
+					signalingTypes: [{
+						id: channelRef.signalingId,
+						channels: [{
+							id: channelRef.channelId,
+							gain: gain
+						}]
+					}]
+				}]
+			}]
+		}]
+	};
+}
+
+async function applyCameraInputGain(gainValue) {
+	const channelRef = wizardState.axis.channelRef;
+	if (!channelRef) {
+		throw new Error('No channel reference loaded');
+	}
+	const clampedGain = clamp(Math.round(Number(gainValue)), wizardState.axis.gainMin, wizardState.axis.gainMax);
+	await axisApiRequest('/axis-cgi/audiodevicecontrol.cgi', 'setDevicesSettings', buildGainUpdatePayload(channelRef, clampedGain));
+	wizardState.axis.currentGain = clampedGain;
+	syncGainLabels();
+	return clampedGain;
+}
+
+function computeRecommendedGain() {
+	const currentGain = numericFromAny(wizardState.axis.currentGain);
+	if (!Number.isFinite(currentGain)) return null;
+	const bg = Number(wizardState.metrics.background || 0);
+	const near = wizardState.metrics.near || {};
+	const nearRms = Number(near.avgRms || 0);
+	const nearPeak = Number(near.maxPeak || 0);
+	if (nearRms <= 0 || bg < 0) return currentGain;
+
+	const snr = nearRms / Math.max(bg, 1e-9);
+	let delta = 0;
+
+	if (snr < 1.8) delta += 8;
+	else if (snr < 2.8) delta += 4;
+	else if (snr < 4.0) delta += 2;
+	else if (snr > 10.0 && bg > 0.0015) delta -= 4;
+	else if (snr > 7.0 && bg > 0.0010) delta -= 2;
+
+	if (nearPeak > 0.8) delta -= 4;
+	if (nearPeak > 0.6) delta -= 2;
+	if (nearPeak < 0.00005 && snr < 3.0) delta += 2;
+
+	if (wizardState.profile.goal === 'strict') delta -= 2;
+	if (wizardState.profile.goal === 'speed') delta += 1;
+
+	return clamp(Math.round(currentGain + delta), wizardState.axis.gainMin, wizardState.axis.gainMax);
+}
 
 function apiGet(url) {
 	return $.ajax({ type: 'GET', url, dataType: 'json', cache: false });
@@ -322,6 +503,7 @@ function currentSettingsFromForm() {
 		wyoming_whisper_port: parseInt($('#wyoming_whisper_port').val(), 10) || 10300,
 		enabled: $('#enabled').is(':checked'),
 		command_keywords: ($('#command_keywords').val() || '').trim(),
+		command_min_words: Math.max(1, Math.min(5, parseInt($('#command_min_words').val(), 10) || 3)),
 		input_node: $('#input_node').val(),
 		language: $('#language').val(),
 		translate: $('#translate').is(':checked'),
@@ -355,8 +537,10 @@ function updateUseCaseSections() {
 	const useCase = $('#transcription_use_case').val() || 'continuous';
 	if (useCase === 'voice_commands') {
 		$('#voice-command-keywords-section').removeClass('d-none');
+		$('#voice-command-min-words-section').removeClass('d-none');
 	} else {
 		$('#voice-command-keywords-section').addClass('d-none');
+		$('#voice-command-min-words-section').addClass('d-none');
 	}
 }
 
@@ -392,7 +576,7 @@ function renderWizardStep() {
 		$('#wizard-rounds-background').val(wizardState.rounds.background);
 		$('#wizard-rounds-distance').val(wizardState.rounds.distance);
 	}
-	if (wizardState.stepIndex === 4) {
+	if (wizardState.stepIndex === 3) {
 		$('#wizard-goal').val(wizardState.profile.goal);
 	}
 }
@@ -609,6 +793,9 @@ function buildRecommendation() {
 		settings.sensitivity = settings.sensitivity === 'low' ? 'normal' : 'high';
 	}
 
+	wizardState.axis.recommendedGain = computeRecommendedGain();
+	syncGainLabels();
+
 	return settings;
 }
 
@@ -616,6 +803,7 @@ function renderRecommendationBox() {
 	wizardState.recommendedSettings = buildRecommendation();
 	const r = wizardState.recommendedSettings;
 	const details = [
+		'Input gain: current=' + (wizardState.axis.currentGain == null ? 'unknown' : wizardState.axis.currentGain) + ', recommended=' + (wizardState.axis.recommendedGain == null ? 'unchanged' : wizardState.axis.recommendedGain),
 		'Backend: ' + r.stt_mode,
 		'Model: ' + r.model,
 		'Sensitivity/VAD: ' + r.sensitivity,
@@ -645,12 +833,21 @@ function openWizard() {
 	wizardState.stepIndex = 0;
 	wizardState.originalSettings = currentSettingsFromForm();
 	wizardState.recommendedSettings = null;
+	wizardState.axis = {
+		channelRef: null,
+		currentGain: null,
+		recommendedGain: null,
+		gainMin: -60,
+		gainMax: 60
+	};
 	wizardState.metrics = { near: null, far: null, background: null, nearRounds: [], farRounds: [], backgroundRounds: [], lastTranscript: '' };
 	setWizardStatus('Idle', 'bg-secondary');
+	syncGainLabels();
 	renderWizardStep();
 	startWizardStatusPolling();
 	const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('optimizationWizardModal'));
 	modal.show();
+	readCurrentInputGain();
 }
 
 async function applyRecommendedSettings() {
@@ -659,6 +856,9 @@ async function applyRecommendedSettings() {
 		if (!wizardState.recommendedSettings) {
 			renderRecommendationBox();
 		}
+		if (wizardState.axis.recommendedGain != null && wizardState.axis.channelRef) {
+			await applyCameraInputGain(wizardState.axis.recommendedGain);
+		}
 		await apiPostSettings(wizardState.recommendedSettings);
 		const s = wizardState.recommendedSettings;
 		$('#stt_mode').val(s.stt_mode);
@@ -666,6 +866,7 @@ async function applyRecommendedSettings() {
 		$('#model').val(s.model);
 		$('#enabled').prop('checked', !!s.enabled);
 			$('#command_keywords').val(s.command_keywords || '');
+		$('#command_min_words').val(Math.max(1, Math.min(5, parseInt(s.command_min_words, 10) || 3)));
 		$('#input_node').val(s.input_node);
 		$('#language').val(s.language);
 		$('#translate').prop('checked', !!s.translate);
@@ -689,6 +890,7 @@ async function applyRecommendedSettings() {
 	}
 }
 
+$(document).on('click', '#wizard-action-read-gain', readCurrentInputGain);
 $(document).on('click', '#wizard-action-validate', runMicValidation);
 $(document).on('click', '#wizard-action-background', runBackgroundMeasurement);
 $(document).on('click', '#wizard-action-near', function() { runDistanceTest(false); });
@@ -744,6 +946,7 @@ $(document).ready(function() {
 				$('#wyoming_whisper_port').val(app.settings.wyoming_whisper_port || 10300);
 				$('#enabled').prop('checked', app.settings.enabled !== false);
 				$('#command_keywords').val(app.settings.command_keywords || '');
+				$('#command_min_words').val(Math.max(1, Math.min(5, parseInt(app.settings.command_min_words, 10) || 3)));
 				$('#input_node').val(app.settings.input_node || 'AudioDevice0Input0');
 				$('#language').val(app.settings.language || 'auto');
 				$('#translate').prop('checked', !!app.settings.translate);
@@ -785,6 +988,7 @@ $('#config-form').submit(function(e) {
 		wyoming_whisper_port: parseInt($('#wyoming_whisper_port').val(), 10) || 10300,
 		enabled: $('#enabled').is(':checked'),
 		command_keywords: ($('#command_keywords').val() || '').trim(),
+		command_min_words: Math.max(1, Math.min(5, parseInt($('#command_min_words').val(), 10) || 3)),
 		input_node: $('#input_node').val(),
 		language: $('#language').val(),
 		translate: $('#translate').is(':checked'),

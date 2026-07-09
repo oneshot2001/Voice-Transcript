@@ -25,12 +25,32 @@ It supports two user-selectable operating modes:
 ./build.sh
 ```
 
-Produces an `.eap` package in the repository root.
+Produces an aarch64 `.eap` package (includes local whisper.cpp + bundled models).
+
+For armv7hf external-only builds:
+
+```bash
+./build-armv7hf.sh
+```
+
+Equivalent:
+
+```bash
+./build.sh armv7hf
+```
+
+This variant excludes local whisper/model assets and requires `stt_mode=external`.
 
 ### 2. Install
 
 ```bash
 ./install.sh <device-host> <user> <password> aarch64
+```
+
+For armv7hf packages:
+
+```bash
+./install.sh <device-host> <user> <password> armv7hf
 ```
 
 ### 3. Configure
@@ -69,7 +89,7 @@ Optimized for speed and command intent extraction.
 Behavior:
 
 - Expects short utterances (typically 3-10 words).
-- Ignores utterances shorter than 3 words.
+- Ignores utterances shorter than the configured minimum command words (1-5, default 3).
 - Requires at least one keyword fuzzy match.
 - If no keyword match:
   - transcript is still shown in UI history,
@@ -109,6 +129,7 @@ Example payload:
 {
   "transcription_use_case": "voice_commands",
   "command_keywords": "light,lights,garage,gate",
+  "command_min_words": 3,
   "stt_mode": "external",
   "wyoming_host": "bart.internal",
   "wyoming_whisper_port": 10300,
@@ -236,9 +257,21 @@ Recommended service package versions:
 - `wyoming-faster-whisper>=3.3.1`
 - `wyoming-piper>=2.2.2` (if TTS services are also running on same host)
 
+## armv7hf External-Only Notes
+
+- armv7hf build is compiled as external-only (`stt_mode` forced to `external`).
+- Local whisper inference is not available in this package.
+- Whisper models are not bundled into the armv7hf `.eap`.
+- `wyoming_host` and `wyoming_whisper_port` must be configured for transcription.
+
 ## Internal vs External Whisper
 
 ### Internal Whisper (`stt_mode=internal`)
+
+Availability:
+
+- Supported by the default aarch64 build.
+- Not available in armv7hf external-only build.
 
 Pros:
 
@@ -286,6 +319,6 @@ For implementation details, architecture, extension points, and contributor work
 
 ## License
 
-MIT with third-party notices.
+BSD 3-Clause with third-party notices.
 
 - [LICENSE](LICENSE)

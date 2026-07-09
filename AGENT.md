@@ -158,14 +158,37 @@ Mode-specific guardrails are applied in `apply_settings(...)`.
 ./build.sh
 ```
 
+Default target:
+
+- `aarch64` with local whisper enabled.
+
+armv7hf external-only target:
+
+```bash
+./build-armv7hf.sh
+```
+
+or:
+
+```bash
+./build.sh armv7hf
+```
+
 Expected artifact:
 
 - `Voice_Transcripts_1_0_0_aarch64.eap` (or matching versioned name)
+- `Voice_Transcripts_1_0_0_armv7hf.eap` for armv7hf build
 
 ## Install
 
 ```bash
 ./install.sh <device-host> <user> <password> aarch64
+```
+
+For armv7hf package:
+
+```bash
+./install.sh <device-host> <user> <password> armv7hf
 ```
 
 ## Verify
@@ -190,6 +213,10 @@ Expected artifact:
    - persist defaults in `app/settings/settings.json`,
    - document in README/about page.
 5. Prefer small testable steps with build validation after core C changes.
+
+6. Respect compile-time build mode:
+  - `EXTERNAL_ONLY_BUILD` / `NO_LOCAL_WHISPER` means local whisper must not be assumed,
+  - backend is forced to external in this mode.
 
 ## Troubleshooting Pointers
 
