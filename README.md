@@ -1,4 +1,4 @@
-# Voice Transcripts ACAP (v1.0.0)
+# Voice Transcripts ACAP
 
 Voice Transcripts is an Axis ACAP for continuous speech transcription on device microphones.
 
@@ -322,3 +322,9 @@ For implementation details, architecture, extension points, and contributor work
 BSD 3-Clause with third-party notices.
 
 - [LICENSE](LICENSE)
+
+## History
+
+### 1.0.1 Jul 9, 2026
+
+**Initial commit**
