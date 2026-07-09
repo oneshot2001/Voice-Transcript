@@ -1,7 +1,7 @@
 /*
  * Wyoming Protocol TCP Client
  * Copyright (c) 2025 Fred Juhlin
- * MIT License
+ * BSD 3-Clause License
  *
  * Note: Uses TCP sockets instead of WebSockets since libwebsockets
  * is not available in ACAP SDK. Wyoming protocol works over raw TCP.

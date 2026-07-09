@@ -20,7 +20,9 @@
 #include <glib.h>
 
 #include "whisper_stt.h"
+#ifndef NO_LOCAL_WHISPER
 #include "whisper.h"
+#endif
 
 #define LOG(fmt, args...)    { syslog(LOG_INFO, fmt, ## args); printf(fmt, ## args);}
 #define LOG_WARN(fmt, args...)    { syslog(LOG_WARNING, fmt, ## args); printf(fmt, ## args);}
@@ -202,6 +204,7 @@ transcribe_and_publish(const float *pcm, guint32 n, guint32 utterance_ms, const 
         return;
     }
 
+#ifndef NO_LOCAL_WHISPER
     gboolean auto_lang = (strcmp(cfg.language, "auto") == 0);
 
     struct whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -275,6 +278,7 @@ transcribe_and_publish(const float *pcm, guint32 n, guint32 utterance_ms, const 
     g_idle_add(deliver_transcript_idle, r);
 
     g_string_free(text, TRUE);
+#endif
 }
 
 static void *
@@ -424,6 +428,16 @@ transcribe_thread_func(void *arg) {
 
 int
 whisper_stt_init(const char *model_path) {
+#ifdef NO_LOCAL_WHISPER
+    LOG("whisper_stt: external-only build, local model disabled (requested model='%s')\n", model_path ? model_path : "");
+    g_running = TRUE;
+    if (pthread_create(&g_worker_thread, NULL, transcribe_thread_func, NULL) != 0) {
+        LOG_WARN("whisper_stt: failed to start transcribe thread\n");
+        g_running = FALSE;
+        return -1;
+    }
+    return 0;
+#else
     if (g_ctx) {
         LOG_WARN("whisper_stt: already initialized\n");
         return -1;
@@ -450,6 +464,7 @@ whisper_stt_init(const char *model_path) {
 
     LOG("whisper_stt: model loaded, transcribe thread started\n");
     return 0;
+#endif
 }
 
 void
@@ -512,7 +527,9 @@ whisper_stt_cleanup(void) {
     }
 
     if (g_ctx) {
+#ifndef NO_LOCAL_WHISPER
         whisper_free(g_ctx);
+#endif
         g_ctx = NULL;
     }
 }
