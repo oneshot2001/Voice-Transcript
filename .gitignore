@@ -7,7 +7,6 @@ build-*/
 *.a
 voice
 *_LICENSE.txt
-manifest.json
 package.conf*
 param.conf
 

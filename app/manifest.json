@@ -1,0 +1,63 @@
+{
+    "schemaVersion": "1.7.1",
+    "acapPackageConf": {
+        "setup": {
+            "friendlyName": "Voice Transcripts",
+            "appName": "voice",
+            "vendor": "Fred Juhlin",
+            "embeddedSdkVersion": "3.0",
+            "vendorUrl": "https://pandosme.github.io",
+            "runMode": "respawn",
+            "version": "1.0.1"
+        },
+        "configuration": {
+            "settingPage": "index.html",
+            "httpConfig": [
+                {
+                    "access": "admin",
+                    "name": "app",
+                    "type": "fastCgi"
+                },
+                {
+                    "access": "admin",
+                    "name": "status",
+                    "type": "fastCgi"
+                },
+                {
+                    "access": "admin",
+                    "name": "settings",
+                    "type": "fastCgi"
+                },
+                {
+                    "access": "admin",
+                    "name": "transcripts",
+                    "type": "fastCgi"
+                },
+                {
+                    "access": "admin",
+                    "name": "mqtt",
+                    "type": "fastCgi"
+                },
+                {
+                    "access": "admin",
+                    "name": "certs",
+                    "type": "fastCgi"
+                }
+            ]
+        }
+    },
+    "resources": {
+        "linux": {
+            "user": {
+                "groups": [
+                    "pipewire"
+                ]
+            }
+        },
+        "dbus": {
+            "requiredMethods": [
+                "com.axis.HTTPConf1.VAPIXServiceAccounts1.GetCredentials"
+            ]
+        }
+    }
+}

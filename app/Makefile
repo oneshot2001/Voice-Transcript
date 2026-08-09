@@ -27,4 +27,4 @@ $(PROG1): $(OBJS1)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 clean:
-	rm -rf $(PROGS) *.o $(LIBDIR) *.eap* *_LICENSE.txt manifest.json package.conf* param.conf
+	rm -rf $(PROGS) *.o $(LIBDIR) *.eap* *_LICENSE.txt package.conf* param.conf
