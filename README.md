@@ -317,6 +317,20 @@ For implementation details, architecture, extension points, and contributor work
 - Buy me a coffee: https://www.buymeacoffee.com/fredjuhlinl
 - Pull requests are highly appreciated.
 
+## Troubleshooting
+
+**PipeWire capture fails to connect (`pw_core`), no audio nodes listed.**
+If you write your own manifest, the Linux group must be `pipewire`, not `audio`.
+With `audio` the app builds, installs and starts, but capture fails with
+`audio_stream_start: FAILED to connect to pw_core` and the node list stays empty.
+
+**App shows "Listening" but nothing is ever transcribed.**
+Cameras without a built-in microphone (or without a connected portcast audio
+interface such as the AXIS T61 series) still expose the full audio subsystem: PipeWire serves the input node,
+the app binds it and reports Listening, but the samples are electrical noise from
+an open input path (RMS floor around 0.0004 on the Q6358-LE tested) and VAD never fires. Check that the
+camera actually has a microphone connected before debugging the app.
+
 ## License
 
 BSD 3-Clause with third-party notices.
